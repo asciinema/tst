@@ -13,7 +13,6 @@ name = "asciinema-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "atty",
  "clap",
  "futures-util",
  "serde",
@@ -793,6 +792,7 @@ checksum = "5fecdca9a5291cc2b8dcf7dc02453fee791a280f3743cb0905f8822ae463b3fe"
 [[package]]
 name = "vt"
 version = "0.2.0"
+source = "git+https://github.com/asciinema/vt-rs.git#232071d90dc7b37e858117fc1761e41cf121c3f8"
 dependencies = [
  "serde",
 ]
