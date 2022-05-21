@@ -1,24 +1,24 @@
-use std::pin::Pin;
-use clap::{Parser, ArgEnum};
 use anyhow::Result;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncBufReadExt;
-use tokio::net::{TcpListener, TcpStream};
-use vt::VT;
-use tokio;
-use tokio::sync::mpsc;
-use tokio::sync::broadcast;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
-use futures_util::StreamExt;
+use clap::{ArgEnum, Parser};
 use futures_util::SinkExt;
-use tungstenite::Message;
+use futures_util::StreamExt;
 use serde::Deserialize;
+use std::pin::Pin;
+use tokio;
+use tokio::fs::File;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
+use tungstenite::Message;
+use vt::VT;
 
 #[derive(Clone, Debug, ArgEnum)]
 enum InputFormat {
     Asciicast,
-    Raw
+    Raw,
 }
 
 #[derive(Deserialize)]
@@ -47,21 +47,19 @@ struct Cli {
 
     /// Virtual terminal height
     #[clap(long, default_value_t = 24)]
-    rows: usize
+    rows: usize,
 }
 
 #[derive(Debug, Clone)]
 enum Event {
     Stdout(String),
-    Reset(usize, usize)
+    Reset(usize, usize),
 }
 
 impl From<Event> for Message {
     fn from(event: Event) -> Self {
         match event {
-            Event::Stdout(data) => {
-                Message::Binary(data.into())
-            }
+            Event::Stdout(data) => Message::Binary(data.into()),
 
             Event::Reset(cols, rows) => {
                 Message::Text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
@@ -70,7 +68,10 @@ impl From<Event> for Message {
     }
 }
 
-async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>) where F: AsyncReadExt + std::marker::Unpin {
+async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>)
+where
+    F: AsyncReadExt + std::marker::Unpin,
+{
     let buf_reader = tokio::io::BufReader::new(file);
     let mut lines = buf_reader.lines();
 
@@ -78,7 +79,9 @@ async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>) where F: Asyn
         match line.chars().nth(0) {
             Some('{') => {
                 if let Ok(header) = serde_json::from_str::<Header>(&line) {
-                    tx.send(Event::Reset(header.width, header.height)).await.unwrap();
+                    tx.send(Event::Reset(header.width, header.height))
+                        .await
+                        .unwrap();
                 }
             }
 
@@ -88,32 +91,46 @@ async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>) where F: Asyn
                 }
             }
 
-            _ => break
+            _ => break,
         }
     }
 }
 
-async fn read_raw_file<F>(mut file: F, tx: &mpsc::Sender<Event>) where F: AsyncReadExt + std::marker::Unpin {
+async fn read_raw_file<F>(mut file: F, tx: &mpsc::Sender<Event>)
+where
+    F: AsyncReadExt + std::marker::Unpin,
+{
     let mut buffer = [0; 1024];
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
-        if n == 0 { break }
-        tx.send(Event::Stdout(String::from_utf8_lossy(&buffer[..n]).into_owned())).await.unwrap();
+        if n == 0 {
+            break;
+        }
+
+        tx.send(Event::Stdout(
+            String::from_utf8_lossy(&buffer[..n]).into_owned(),
+        ))
+        .await
+        .unwrap();
     }
 }
 
 type Reader = Pin<Box<dyn AsyncRead + Send + 'static>>;
 
-async fn read_file(filename: Option<String>, format: InputFormat, tx: mpsc::Sender<Event>) -> Result<()> {
+async fn read_file(
+    filename: Option<String>,
+    format: InputFormat,
+    tx: mpsc::Sender<Event>,
+) -> Result<()> {
     let mut file: Reader = match &filename {
         Some(filename) => Box::pin(Box::new(File::open(filename).await?)),
-        None => Box::pin(Box::new(tokio::io::stdin()))
+        None => Box::pin(Box::new(tokio::io::stdin())),
     };
 
     loop {
         match format {
             InputFormat::Asciicast => read_asciicast_file(file, &tx).await,
-            InputFormat::Raw => read_raw_file(file, &tx).await
+            InputFormat::Raw => read_raw_file(file, &tx).await,
         }
 
         if let Some(filename) = &filename {
@@ -142,7 +159,11 @@ fn handle_event(event: Event, tx: &broadcast::Sender<Event>, mut vt: VT) -> VT {
     vt
 }
 
-async fn handle_client(tcp_stream: TcpStream, initial_events: Vec<Event>, mut rx: broadcast::Receiver<Event>) -> Result<()> {
+async fn handle_client(
+    tcp_stream: TcpStream,
+    initial_events: Vec<Event>,
+    mut rx: broadcast::Receiver<Event>,
+) -> Result<()> {
     let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await?;
     let (mut sender, _receiver) = ws_stream.split();
 
@@ -160,10 +181,7 @@ async fn handle_client(tcp_stream: TcpStream, initial_events: Vec<Event>, mut rx
 }
 
 fn initial_events(vt: &VT) -> Vec<Event> {
-    vec![
-        Event::Reset(vt.columns, vt.rows),
-        Event::Stdout(vt.dump())
-    ]
+    vec![Event::Reset(vt.columns, vt.rows), Event::Stdout(vt.dump())]
 }
 
 #[tokio::main]
