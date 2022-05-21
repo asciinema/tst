@@ -68,7 +68,7 @@ impl From<Event> for Message {
     }
 }
 
-async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>)
+async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
 {
@@ -79,24 +79,24 @@ where
         match line.chars().nth(0) {
             Some('{') => {
                 if let Ok(header) = serde_json::from_str::<Header>(&line) {
-                    tx.send(Event::Reset(header.width, header.height))
-                        .await
-                        .unwrap();
+                    tx.send(Event::Reset(header.width, header.height)).await?;
                 }
             }
 
             Some('[') => {
                 if let Ok((_, "o", data)) = serde_json::from_str::<(f32, &str, String)>(&line) {
-                    tx.send(Event::Stdout(data)).await.unwrap();
+                    tx.send(Event::Stdout(data)).await?;
                 }
             }
 
             _ => break,
         }
     }
+
+    Ok(())
 }
 
-async fn read_raw_file<F>(mut file: F, tx: &mpsc::Sender<Event>)
+async fn read_raw_file<F>(mut file: F, tx: &mpsc::Sender<Event>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
 {
@@ -110,9 +110,10 @@ where
         tx.send(Event::Stdout(
             String::from_utf8_lossy(&buffer[..n]).into_owned(),
         ))
-        .await
-        .unwrap();
+        .await?;
     }
+
+    Ok(())
 }
 
 type Reader = Pin<Box<dyn AsyncRead + Send + 'static>>;
@@ -129,8 +130,8 @@ async fn read_file(
 
     loop {
         match format {
-            InputFormat::Asciicast => read_asciicast_file(file, &tx).await,
-            InputFormat::Raw => read_raw_file(file, &tx).await,
+            InputFormat::Asciicast => read_asciicast_file(file, &tx).await?,
+            InputFormat::Raw => read_raw_file(file, &tx).await?,
         }
 
         if let Some(filename) = &filename {
