@@ -76,15 +76,16 @@ where
     let mut lines = buf_reader.lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
-        match line.chars().nth(0) {
+        match line.chars().next() {
             Some('{') => {
-                if let Ok(header) = serde_json::from_str::<Header>(&line) {
-                    tx.send(Event::Reset(header.width, header.height)).await?;
-                }
+                let header = serde_json::from_str::<Header>(&line)?;
+                tx.send(Event::Reset(header.width, header.height)).await?;
             }
 
             Some('[') => {
-                if let Ok((_, "o", data)) = serde_json::from_str::<(f32, &str, String)>(&line) {
+                let (_, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
+
+                if event_type == "o" {
                     tx.send(Event::Stdout(data)).await?;
                 }
             }
