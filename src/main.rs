@@ -145,16 +145,14 @@ async fn read_file(
     Ok(())
 }
 
-fn handle_event(event: Event, tx: &broadcast::Sender<Event>, mut vt: VT) -> VT {
+fn feed_event(mut vt: VT, event: &Event) -> VT {
     match &event {
         Event::Reset(cols, rows) => {
             vt = VT::new(*cols, *rows);
-            let _ = tx.send(event);
         }
 
         Event::Stdout(text) => {
             vt.feed_str(text);
-            let _ = tx.send(event);
         }
     }
 
@@ -206,7 +204,8 @@ async fn main() -> Result<()> {
 
             Some(event) = rx.recv() => {
                 println!("new event: {:?}", event);
-                vt = handle_event(event, &tx2, vt);
+                vt = feed_event(vt, &event);
+                let _ = tx2.send(event);
             }
 
             Ok((stream, _)) = listener.accept() => {
