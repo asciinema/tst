@@ -129,7 +129,6 @@ async fn read_file(filename: Option<String>, format: InputFormat, tx: mpsc::Send
 fn handle_event(event: Event, tx: &broadcast::Sender<Event>, mut vt: VT) -> VT {
     match &event {
         Event::Reset(cols, rows) => {
-            println!("Reset: {}x{}", cols, rows);
             vt = VT::new(*cols, *rows);
             let _ = tx.send(event);
         }
@@ -170,13 +169,6 @@ fn initial_events(vt: &VT) -> Vec<Event> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    println!("{:?}", cli.filename);
-    println!("{:?}", cli.in_fmt);
-    println!("{}", cli.listen_addr);
-    println!("{}", cli.cols);
-    println!("{}", cli.rows);
-
     let mut vt = VT::new(cli.cols, cli.rows);
     let listener = TcpListener::bind(&cli.listen_addr).await?;
     let (tx, mut rx) = mpsc::channel(32);
