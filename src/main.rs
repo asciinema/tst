@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut vt = VT::new(cli.cols, cli.rows);
     let listener = TcpListener::bind(&cli.listen_addr).await?;
-    let (stream_tx, mut stream_rx) = mpsc::channel(32);
+    let (stream_tx, mut stream_rx) = mpsc::channel(1024);
     let (broadcast_tx, _) = broadcast::channel(1024);
     let mut reader = tokio::spawn(read_file(cli.filename, cli.in_fmt, stream_tx));
 
