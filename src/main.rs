@@ -1,16 +1,12 @@
 use anyhow::Result;
 use clap::{ArgEnum, Parser};
-use futures_util::SinkExt;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::pin::Pin;
 use tokio::fs::File;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tungstenite::Message;
 use vt::VT;
 
