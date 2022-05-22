@@ -189,32 +189,32 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut vt = VT::new(cli.cols, cli.rows);
     let listener = TcpListener::bind(&cli.listen_addr).await?;
-    let (tx, mut rx) = mpsc::channel(32);
-    let (tx2, _rx2) = broadcast::channel(1024);
-    let mut x = tokio::spawn(read_file(cli.filename, cli.in_fmt, tx));
+    let (stream_tx, mut stream_rx) = mpsc::channel(32);
+    let (broadcast_tx, _) = broadcast::channel(1024);
+    let mut reader = tokio::spawn(read_file(cli.filename, cli.in_fmt, stream_tx));
 
     println!("listening on {}", cli.listen_addr);
 
     loop {
         tokio::select! {
-            a = &mut x => {
-                println!("reader finished: {:?}", a);
-                return a?;
+            result = &mut reader => {
+                println!("reader finished: {:?}", result);
+                return result?;
             }
 
-            Some(event) = rx.recv() => {
+            Some(event) = stream_rx.recv() => {
                 println!("new event: {:?}", event);
                 vt = feed_event(vt, &event);
-                let _ = tx2.send(event);
+                let _ = broadcast_tx.send(event);
             }
 
             Ok((stream, _)) = listener.accept() => {
                 println!("new client: {}", stream.peer_addr()?);
-                let evs = initial_events(&vt);
-                let z = tx2.subscribe();
+                let events = initial_events(&vt);
+                let broadcast_rx = broadcast_tx.subscribe();
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, evs, z).await {
+                    if let Err(e) = handle_client(stream, events, broadcast_rx).await {
                         println!("client err: {:?}", e);
                     }
                 });
