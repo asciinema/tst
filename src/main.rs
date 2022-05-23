@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{ArgEnum, Parser};
 use futures_util::{SinkExt, StreamExt};
+use log::{debug, info};
 use serde::Deserialize;
 use std::pin::Pin;
 use tokio::fs::File;
@@ -181,6 +182,8 @@ fn initial_events(vt: &VT) -> Vec<Event> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let cli = Cli::parse();
     let mut vt = VT::new(cli.cols, cli.rows);
     let listener = TcpListener::bind(&cli.listen_addr).await?;
@@ -188,29 +191,29 @@ async fn main() -> Result<()> {
     let (broadcast_tx, _) = broadcast::channel(1024);
     let mut reader = tokio::spawn(read_file(cli.filename, cli.in_fmt, stream_tx));
 
-    println!("listening on {}", cli.listen_addr);
+    info!("listening on {}", cli.listen_addr);
 
     loop {
         tokio::select! {
             result = &mut reader => {
-                println!("reader finished: {:?}", result);
+                info!("reader finished: {:?}", result);
                 return result?;
             }
 
             Some(event) = stream_rx.recv() => {
-                println!("new event: {:?}", event);
+                debug!("new event: {:?}", event);
                 vt = feed_event(vt, &event);
                 let _ = broadcast_tx.send(event);
             }
 
             Ok((stream, _)) = listener.accept() => {
-                println!("new client: {}", stream.peer_addr()?);
+                info!("new client: {}", stream.peer_addr()?);
                 let events = initial_events(&vt);
                 let broadcast_rx = broadcast_tx.subscribe();
 
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(stream, events, broadcast_rx).await {
-                        println!("client err: {:?}", e);
+                        info!("client err: {:?}", e);
                     }
                 });
             }
