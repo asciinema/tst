@@ -1,15 +1,16 @@
 use anyhow::Result;
 use clap::{ArgEnum, Parser};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use log::{debug, info};
 use serde::Deserialize;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc};
-use tungstenite::Message;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use vt::VT;
+use warp::ws::{Message, WebSocket, Ws};
+use warp::{Filter, Reply};
 
 #[derive(Clone, Debug, ArgEnum)]
 enum InputFormat {
@@ -55,16 +56,16 @@ enum Event {
 impl From<Event> for Message {
     fn from(event: Event) -> Self {
         match event {
-            Event::Stdout(data) => Message::Binary(data.into()),
+            Event::Stdout(data) => Message::binary(data.as_bytes()),
 
             Event::Reset(cols, rows) => {
-                Message::Text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
+                Message::text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
             }
         }
     }
 }
 
-async fn read_asciicast_file<F>(file: F, tx: &mpsc::Sender<Event>) -> Result<()>
+async fn read_asciicast_file<F>(file: F, stream_tx: &mpsc::Sender<Event>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
 {
@@ -75,14 +76,16 @@ where
         match line.chars().next() {
             Some('{') => {
                 let header = serde_json::from_str::<Header>(&line)?;
-                tx.send(Event::Reset(header.width, header.height)).await?;
+                stream_tx
+                    .send(Event::Reset(header.width, header.height))
+                    .await?;
             }
 
             Some('[') => {
                 let (_, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
 
                 if event_type == "o" {
-                    tx.send(Event::Stdout(data)).await?;
+                    stream_tx.send(Event::Stdout(data)).await?;
                 }
             }
 
@@ -93,7 +96,7 @@ where
     Ok(())
 }
 
-async fn read_raw_file<F>(mut file: F, tx: &mpsc::Sender<Event>) -> Result<()>
+async fn read_raw_file<F>(mut file: F, stream_tx: &mpsc::Sender<Event>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
 {
@@ -104,10 +107,11 @@ where
             break;
         }
 
-        tx.send(Event::Stdout(
-            String::from_utf8_lossy(&buffer[..n]).into_owned(),
-        ))
-        .await?;
+        stream_tx
+            .send(Event::Stdout(
+                String::from_utf8_lossy(&buffer[..n]).into_owned(),
+            ))
+            .await?;
     }
 
     Ok(())
@@ -118,7 +122,7 @@ type Reader = Pin<Box<dyn AsyncRead + Send + 'static>>;
 async fn read_file(
     filename: Option<String>,
     format: InputFormat,
-    tx: mpsc::Sender<Event>,
+    stream_tx: mpsc::Sender<Event>,
 ) -> Result<()> {
     let mut file: Reader = match &filename {
         Some(filename) => Box::pin(Box::new(File::open(filename).await?)),
@@ -127,8 +131,8 @@ async fn read_file(
 
     loop {
         match format {
-            InputFormat::Asciicast => read_asciicast_file(file, &tx).await?,
-            InputFormat::Raw => read_raw_file(file, &tx).await?,
+            InputFormat::Asciicast => read_asciicast_file(file, &stream_tx).await?,
+            InputFormat::Raw => read_raw_file(file, &stream_tx).await?,
         }
 
         if let Some(filename) = &filename {
@@ -156,12 +160,11 @@ fn feed_event(mut vt: VT, event: &Event) -> VT {
 }
 
 async fn handle_client(
-    tcp_stream: TcpStream,
+    websocket: WebSocket,
     initial_events: Vec<Event>,
-    mut rx: broadcast::Receiver<Event>,
+    mut broadcast_rx: broadcast::Receiver<Event>,
 ) -> Result<()> {
-    let ws_stream = tokio_tungstenite::accept_async(tcp_stream).await?;
-    let (mut sender, _receiver) = ws_stream.split();
+    let (mut sender, _) = websocket.split();
 
     for event in initial_events {
         sender.feed(event.into()).await?;
@@ -169,7 +172,7 @@ async fn handle_client(
 
     sender.flush().await?;
 
-    while let Ok(event) = rx.recv().await {
+    while let Ok(event) = broadcast_rx.recv().await {
         sender.send(event.into()).await?;
     }
 
@@ -180,43 +183,91 @@ fn initial_events(vt: &VT) -> Vec<Event> {
     vec![Event::Reset(vt.columns, vt.rows), Event::Stdout(vt.dump())]
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    env_logger::init();
-
-    let cli = Cli::parse();
-    let mut vt = VT::new(cli.cols, cli.rows);
-    let listener = TcpListener::bind(&cli.listen_addr).await?;
-    let (stream_tx, mut stream_rx) = mpsc::channel(1024);
+async fn handle_events(
+    cols: usize,
+    rows: usize,
+    mut stream_rx: mpsc::Receiver<Event>,
+    mut clients_rx: mpsc::Receiver<(Option<SocketAddr>, WebSocket)>,
+) -> Option<()> {
+    let mut vt = VT::new(cols, rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
-    let mut reader = tokio::spawn(read_file(cli.filename, cli.in_fmt, stream_tx));
-
-    info!("listening on {}", cli.listen_addr);
 
     loop {
         tokio::select! {
-            result = &mut reader => {
-                info!("reader finished: {:?}", result);
-                return result?;
-            }
-
-            Some(event) = stream_rx.recv() => {
+            value = stream_rx.recv() => {
+                let event = value?;
                 debug!("new event: {:?}", event);
                 vt = feed_event(vt, &event);
                 let _ = broadcast_tx.send(event);
             }
 
-            Ok((stream, _)) = listener.accept() => {
-                info!("new client: {}", stream.peer_addr()?);
+            value = clients_rx.recv() => {
+                let (addr, websocket) = value?;
+                info!("new client: {:?}", addr);
                 let events = initial_events(&vt);
                 let broadcast_rx = broadcast_tx.subscribe();
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, events, broadcast_rx).await {
+                    if let Err(e) = handle_client(websocket, events, broadcast_rx).await {
                         info!("client err: {:?}", e);
                     }
                 });
             }
         }
     }
+}
+
+fn ws_handler(
+    addr: Option<SocketAddr>,
+    ws: Ws,
+    clients_tx: mpsc::Sender<(Option<SocketAddr>, WebSocket)>,
+) -> impl Reply {
+    ws.on_upgrade(move |websocket| async move {
+        let _ = clients_tx.send((addr, websocket)).await;
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
+
+    let cli = Cli::parse();
+    let (stream_tx, stream_rx) = mpsc::channel(1024);
+    let (clients_tx, clients_rx) = mpsc::channel(1);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let clients_tx = warp::any().map(move || clients_tx.clone());
+
+    let routes = warp::path::end()
+        .and(warp::addr::remote())
+        .and(warp::ws())
+        .and(clients_tx)
+        .map(ws_handler);
+
+    let listen_addr: SocketAddr = cli.listen_addr.parse()?;
+    info!("listening on {}", listen_addr);
+    let signal = shutdown_rx.map(|_| ());
+    let (_, server) = warp::serve(routes).try_bind_with_graceful_shutdown(listen_addr, signal)?;
+    let mut server_handle = tokio::spawn(server);
+
+    let source_name = cli.filename.clone().unwrap_or_else(|| "stdin".to_string());
+    info!("reading from {}", source_name);
+    let reader = read_file(cli.filename, cli.in_fmt, stream_tx);
+    let mut reader_handle = tokio::spawn(reader);
+
+    tokio::spawn(handle_events(cli.cols, cli.rows, stream_rx, clients_rx));
+
+    tokio::select! {
+        result = &mut reader_handle => {
+            debug!("reader finished: {:?}", &result);
+            let _ = shutdown_tx.send(());
+            result??;
+        }
+
+        result = &mut server_handle => {
+            debug!("server finished: {:?}", &result);
+            result?;
+        }
+    }
+
+    Ok(())
 }
