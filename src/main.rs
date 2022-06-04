@@ -28,10 +28,10 @@ pub struct Header {
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
-    /// Optional name to operate on
+    /// Input pipe filename (defaults to stdin)
     filename: Option<String>,
 
-    /// Specify input format
+    /// Input format
     #[clap(long, arg_enum, default_value_t = InputFormat::Asciicast)]
     in_fmt: InputFormat,
 
