@@ -3,6 +3,7 @@ use clap::{ArgEnum, Parser};
 use env_logger::Env;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use log::{debug, info};
+use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -51,6 +52,10 @@ struct Cli {
     #[clap(short, long)]
     verbose: bool,
 }
+
+#[derive(RustEmbed)]
+#[folder = "public"]
+struct Assets;
 
 #[derive(Debug, Clone)]
 enum Event {
@@ -259,7 +264,7 @@ async fn main() -> Result<()> {
         .and(clients_tx)
         .map(ws_handler);
 
-    let static_route = warp::fs::dir("public");
+    let static_route = warp_embed::embed(&Assets);
     let routes = ws_route.or(static_route);
 
     let listen_addr: SocketAddr = cli.listen_addr.parse()?;
