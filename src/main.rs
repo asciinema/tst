@@ -253,14 +253,18 @@ async fn main() -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let clients_tx = warp::any().map(move || clients_tx.clone());
 
-    let routes = warp::path::end()
+    let ws_route = warp::path("ws")
         .and(warp::addr::remote())
         .and(warp::ws())
         .and(clients_tx)
         .map(ws_handler);
 
+    let static_route = warp::fs::dir("public");
+    let routes = ws_route.or(static_route);
+
     let listen_addr: SocketAddr = cli.listen_addr.parse()?;
-    info!("listening on {}", listen_addr);
+    info!("serving assets from ./public at http://{}", listen_addr);
+    info!("streaming at ws://{}/ws", listen_addr);
     let signal = shutdown_rx.map(|_| ());
     let (_, server) = warp::serve(routes).try_bind_with_graceful_shutdown(listen_addr, signal)?;
     let mut server_handle = tokio::spawn(server);
