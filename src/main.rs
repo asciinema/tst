@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{ArgEnum, Parser};
+use env_logger::Env;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use log::{debug, info};
 use serde::Deserialize;
@@ -45,6 +46,10 @@ struct Cli {
     /// Virtual terminal height
     #[clap(long, default_value_t = 24)]
     rows: usize,
+
+    /// Enable verbose logging
+    #[clap(short, long)]
+    verbose: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +94,7 @@ where
                 }
             }
 
-            _ => break,
+            _ => bail!("invalid input line"),
         }
     }
 
@@ -187,7 +192,7 @@ async fn handle_events(
     cols: usize,
     rows: usize,
     mut stream_rx: mpsc::Receiver<Event>,
-    mut clients_rx: mpsc::Receiver<(Option<SocketAddr>, WebSocket)>,
+    mut clients_rx: mpsc::Receiver<(SocketAddr, WebSocket)>,
 ) -> Option<()> {
     let mut vt = VT::new(cols, rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
@@ -196,20 +201,23 @@ async fn handle_events(
         tokio::select! {
             value = stream_rx.recv() => {
                 let event = value?;
-                debug!("new event: {:?}", event);
+                debug!("stream event: {:?}", event);
                 vt = feed_event(vt, &event);
                 let _ = broadcast_tx.send(event);
             }
 
             value = clients_rx.recv() => {
                 let (addr, websocket) = value?;
-                info!("new client: {:?}", addr);
+                info!("client connected: {:?}", addr);
                 let events = initial_events(&vt);
                 let broadcast_rx = broadcast_tx.subscribe();
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(websocket, events, broadcast_rx).await {
-                        info!("client err: {:?}", e);
+                    let result = handle_client(websocket, events, broadcast_rx).await;
+                    info!("client disconnected: {:?}", addr);
+
+                    if let Err(e) = result {
+                        debug!("client err: {:?}", e);
                     }
                 });
             }
@@ -220,18 +228,26 @@ async fn handle_events(
 fn ws_handler(
     addr: Option<SocketAddr>,
     ws: Ws,
-    clients_tx: mpsc::Sender<(Option<SocketAddr>, WebSocket)>,
+    clients_tx: mpsc::Sender<(SocketAddr, WebSocket)>,
 ) -> impl Reply {
     ws.on_upgrade(move |websocket| async move {
-        let _ = clients_tx.send((addr, websocket)).await;
+        if let Some(addr) = addr {
+            let _ = clients_tx.send((addr, websocket)).await;
+        }
     })
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
-
     let cli = Cli::parse();
+
+    let log_level = match cli.verbose {
+        false => "info",
+        true => "debug",
+    };
+
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+
     let (stream_tx, stream_rx) = mpsc::channel(1024);
     let (clients_tx, clients_rx) = mpsc::channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
