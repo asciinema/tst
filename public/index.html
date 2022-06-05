@@ -28,12 +28,17 @@
   <script>
     const loc = window.location;
 
-    const src = {
+    const ws_src = {
       driver: 'websocket',
       url: loc.protocol.replace("http", "ws") + '//' + loc.host + '/ws'
     };
 
-    const player = AsciinemaPlayer.create(src, document.body, { fit: 'both' });
+    const sse_src = {
+      driver: 'eventsource',
+      url: loc.protocol + '//' + loc.host + '/sse'
+    };
+
+    const player = AsciinemaPlayer.create(ws_src, document.body, { fit: 'both' });
     window.player = player;
   </script>
 </body>

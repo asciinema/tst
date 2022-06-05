@@ -1,17 +1,22 @@
 use anyhow::{bail, Result};
+use async_stream::stream;
 use clap::{ArgEnum, Parser};
 use env_logger::Env;
-use futures_util::{FutureExt, SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
 use log::{debug, info};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use vt::VT;
-use warp::ws::{Message, WebSocket, Ws};
+use warp::http::{self, Response};
+use warp::hyper::Body;
+use warp::sse;
+use warp::ws;
 use warp::{Filter, Reply};
 
 #[derive(Clone, Debug, ArgEnum)]
@@ -63,14 +68,28 @@ enum Event {
     Reset(usize, usize),
 }
 
-impl From<Event> for Message {
+impl From<Event> for ws::Message {
     fn from(event: Event) -> Self {
-        match event {
-            Event::Stdout(data) => Message::binary(data.as_bytes()),
+        use Event::*;
 
-            Event::Reset(cols, rows) => {
-                Message::text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
+        match event {
+            Stdout(data) => ws::Message::binary(data.as_bytes()),
+            Reset(cols, rows) => {
+                ws::Message::text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
             }
+        }
+    }
+}
+
+impl From<Event> for sse::Event {
+    fn from(event: Event) -> Self {
+        use Event::*;
+
+        let e = sse::Event::default();
+
+        match event {
+            Stdout(data) => e.json_data((0.0, "o", data)).unwrap(),
+            Reset(cols, rows) => e.data(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows)),
         }
     }
 }
@@ -169,35 +188,18 @@ fn feed_event(mut vt: VT, event: &Event) -> VT {
     vt
 }
 
-async fn handle_client(
-    websocket: WebSocket,
-    initial_events: Vec<Event>,
-    mut broadcast_rx: broadcast::Receiver<Event>,
-) -> Result<()> {
-    let (mut sender, _) = websocket.split();
-
-    for event in initial_events {
-        sender.feed(event.into()).await?;
-    }
-
-    sender.flush().await?;
-
-    while let Ok(event) = broadcast_rx.recv().await {
-        sender.send(event.into()).await?;
-    }
-
-    Ok(())
-}
-
 fn initial_events(vt: &VT) -> Vec<Event> {
     vec![Event::Reset(vt.columns, vt.rows), Event::Stdout(vt.dump())]
 }
+
+type ClientInitResponse = (Vec<Event>, broadcast::Receiver<Event>);
+type ClientInitRequest = oneshot::Sender<ClientInitResponse>;
 
 async fn handle_events(
     cols: usize,
     rows: usize,
     mut stream_rx: mpsc::Receiver<Event>,
-    mut clients_rx: mpsc::Receiver<(SocketAddr, WebSocket)>,
+    mut clients_rx: mpsc::Receiver<ClientInitRequest>,
 ) -> Option<()> {
     let mut vt = VT::new(cols, rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
@@ -211,35 +213,94 @@ async fn handle_events(
                 let _ = broadcast_tx.send(event);
             }
 
-            value = clients_rx.recv() => {
-                let (addr, websocket) = value?;
-                info!("client connected: {:?}", addr);
+            request = clients_rx.recv() => {
+                let reply_tx = request?;
                 let events = initial_events(&vt);
                 let broadcast_rx = broadcast_tx.subscribe();
-
-                tokio::spawn(async move {
-                    let result = handle_client(websocket, events, broadcast_rx).await;
-                    info!("client disconnected: {:?}", addr);
-
-                    if let Err(e) = result {
-                        debug!("client err: {:?}", e);
-                    }
-                });
+                reply_tx.send((events, broadcast_rx)).unwrap();
             }
         }
     }
 }
 
+async fn init_client(clients_tx: mpsc::Sender<ClientInitRequest>) -> Result<ClientInitResponse> {
+    let (tx, rx) = oneshot::channel();
+    clients_tx.send(tx).await?;
+
+    Ok(rx.await?)
+}
+
+async fn handle_websocket(
+    websocket: ws::WebSocket,
+    clients_tx: mpsc::Sender<ClientInitRequest>,
+) -> Result<()> {
+    let (events, mut broadcast_rx) = init_client(clients_tx).await?;
+    let (mut sender, _) = websocket.split();
+
+    for event in events {
+        sender.feed(event.into()).await?;
+    }
+
+    sender.flush().await?;
+
+    while let Ok(event) = broadcast_rx.recv().await {
+        sender.send(event.into()).await?;
+    }
+
+    Ok(())
+}
+
 fn ws_handler(
-    addr: Option<SocketAddr>,
-    ws: Ws,
-    clients_tx: mpsc::Sender<(SocketAddr, WebSocket)>,
+    addr: SocketAddr,
+    ws: ws::Ws,
+    clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> impl Reply {
     ws.on_upgrade(move |websocket| async move {
-        if let Some(addr) = addr {
-            let _ = clients_tx.send((addr, websocket)).await;
+        info!("ws client connected: {:?}", addr);
+
+        let result = handle_websocket(websocket, clients_tx).await;
+        info!("ws client disconnected: {:?}", addr);
+
+        if let Err(e) = result {
+            debug!("ws client err: {:?}", e);
         }
     })
+}
+
+async fn sse_stream(
+    clients_tx: mpsc::Sender<ClientInitRequest>,
+) -> Result<impl Stream<Item = Result<sse::Event, Infallible>>> {
+    let (events, mut broadcast_rx) = init_client(clients_tx).await?;
+
+    let stream = stream! {
+        for event in events {
+            yield Ok::<sse::Event, Infallible>(event.into());
+        }
+
+        while let Ok(event) = broadcast_rx.recv().await {
+            yield Ok(event.into());
+        }
+
+        yield Ok(sse::Event::default().event("done").data("done"));
+    };
+
+    Ok(stream)
+}
+
+async fn sse_handler(
+    addr: SocketAddr,
+    clients_tx: mpsc::Sender<ClientInitRequest>,
+) -> Response<Body> {
+    info!("sse client connected: {:?}", addr);
+
+    match sse_stream(clients_tx).await {
+        Ok(stream) => sse::reply(sse::keep_alive().stream(stream)).into_response(),
+
+        Err(e) => {
+            debug!("sse client err: {:?}", e);
+            http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 #[tokio::main]
@@ -256,20 +317,31 @@ async fn main() -> Result<()> {
     let (stream_tx, stream_rx) = mpsc::channel(1024);
     let (clients_tx, clients_rx) = mpsc::channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let clients_tx = warp::any().map(move || clients_tx.clone());
 
+    let ws_clients_tx = clients_tx.clone();
+    let ws_clients_tx = warp::any().map(move || ws_clients_tx.clone());
     let ws_route = warp::path("ws")
         .and(warp::addr::remote())
+        .map(Option::unwrap)
         .and(warp::ws())
-        .and(clients_tx)
+        .and(ws_clients_tx)
         .map(ws_handler);
 
-    let static_route = warp_embed::embed(&Assets);
-    let routes = ws_route.or(static_route);
+    let sse_clients_tx = clients_tx.clone();
+    let sse_clients_tx = warp::any().map(move || sse_clients_tx.clone());
+    let sse_route = warp::path("sse")
+        .and(warp::addr::remote())
+        .map(Option::unwrap)
+        .and(warp::get())
+        .and(sse_clients_tx)
+        .then(sse_handler);
+
+    let routes = ws_route.or(sse_route).or(warp_embed::embed(&Assets));
 
     let listen_addr: SocketAddr = cli.listen_addr.parse()?;
+    info!("streaming via WebSocket at ws://{}/ws", listen_addr);
+    info!("streaming via SSE at http://{}/sse", listen_addr);
     info!("serving assets from ./public at http://{}", listen_addr);
-    info!("streaming at ws://{}/ws", listen_addr);
     let signal = shutdown_rx.map(|_| ());
     let (_, server) = warp::serve(routes).try_bind_with_graceful_shutdown(listen_addr, signal)?;
     let mut server_handle = tokio::spawn(server);
