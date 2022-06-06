@@ -247,6 +247,8 @@ async fn handle_websocket(
         sender.send(event.into()).await?;
     }
 
+    sender.send(ws::Message::close()).await?;
+
     Ok(())
 }
 
