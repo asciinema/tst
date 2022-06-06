@@ -247,7 +247,9 @@ async fn handle_websocket(
         sender.send(event.into()).await?;
     }
 
-    sender.send(ws::Message::close()).await?;
+    sender
+        .send(ws::Message::close_with(1000u16, "done"))
+        .await?;
 
     Ok(())
 }
