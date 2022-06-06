@@ -38,8 +38,20 @@
       url: loc.protocol + '//' + loc.host + '/sse'
     };
 
-    const player = AsciinemaPlayer.create(ws_src, document.body, { fit: 'both' });
-    window.player = player;
+    const params = new URLSearchParams(loc.hash.replace('#', '?'));
+    const src = params.get('drv') === 'sse' ? sse_src : ws_src;
+    const fit = params.get('fit');
+    const terminalLineHeight = params.get('terminalLineHeight');
+
+    const opts = {
+      fit: fit === null ? 'both' : fit,
+      theme: params.get('theme'),
+      autoPlay: params.get('autoPlay') !== 'false',
+      terminalFontFamily: params.get('terminalFontFamily'),
+      terminalLineHeight: terminalLineHeight === null ? undefined : parseFloat(terminalLineHeight)
+    };
+
+    window.player = AsciinemaPlayer.create(src, document.body, opts);
   </script>
 </body>
 </html>
