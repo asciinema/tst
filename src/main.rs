@@ -12,6 +12,7 @@ use std::pin::Pin;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::Instant;
 use vt::VT;
 use warp::http::{self, Response};
 use warp::hyper::Body;
@@ -64,7 +65,7 @@ struct Assets;
 
 #[derive(Debug, Clone)]
 enum Event {
-    Stdout(String),
+    Stdout(f32, String),
     Reset(usize, usize),
 }
 
@@ -73,7 +74,7 @@ impl From<Event> for ws::Message {
         use Event::*;
 
         match event {
-            Stdout(data) => ws::Message::binary(data.as_bytes()),
+            Stdout(_, data) => ws::Message::binary(data.as_bytes()),
             Reset(cols, rows) => {
                 ws::Message::text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
             }
@@ -88,7 +89,7 @@ impl From<Event> for sse::Event {
         let e = sse::Event::default();
 
         match event {
-            Stdout(data) => e.json_data((0.0, "o", data)).unwrap(),
+            Stdout(time, data) => e.json_data((time, "o", data)).unwrap(),
             Reset(cols, rows) => e.data(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows)),
         }
     }
@@ -111,10 +112,10 @@ where
             }
 
             Some('[') => {
-                let (_, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
+                let (time, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
 
                 if event_type == "o" {
-                    stream_tx.send(Event::Stdout(data)).await?;
+                    stream_tx.send(Event::Stdout(time, data)).await?;
                 }
             }
 
@@ -130,6 +131,7 @@ where
     F: AsyncReadExt + std::marker::Unpin,
 {
     let mut buffer = [0; 1024];
+    let now = Instant::now();
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
         if n == 0 {
@@ -138,6 +140,7 @@ where
 
         stream_tx
             .send(Event::Stdout(
+                now.elapsed().as_secs_f32(),
                 String::from_utf8_lossy(&buffer[..n]).into_owned(),
             ))
             .await?;
@@ -180,7 +183,7 @@ fn feed_event(mut vt: VT, event: &Event) -> VT {
             vt = VT::new(*cols, *rows);
         }
 
-        Event::Stdout(text) => {
+        Event::Stdout(_, text) => {
             vt.feed_str(text);
         }
     }
@@ -189,7 +192,10 @@ fn feed_event(mut vt: VT, event: &Event) -> VT {
 }
 
 fn initial_events(vt: &VT) -> Vec<Event> {
-    vec![Event::Reset(vt.columns, vt.rows), Event::Stdout(vt.dump())]
+    vec![
+        Event::Reset(vt.columns, vt.rows),
+        Event::Stdout(0.0, vt.dump()),
+    ]
 }
 
 type ClientInitResponse = (Vec<Event>, broadcast::Receiver<Event>);
