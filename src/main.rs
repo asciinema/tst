@@ -287,7 +287,22 @@ async fn sse_stream(
             yield Ok::<sse::Event, Infallible>(event.into());
         }
 
+        let mut now = Instant::now();
+
         while let Ok(event) = broadcast_rx.recv().await {
+            let mut event = event;
+
+            match event {
+                Event::Reset(_, _) => {
+                    now = Instant::now();
+                },
+
+                Event::Stdout(_, data) => {
+                    let time = now.elapsed().as_secs_f32();
+                    event = Event::Stdout(time, data);
+                }
+            }
+
             yield Ok(event.into());
         }
 
