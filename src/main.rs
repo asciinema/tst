@@ -74,7 +74,10 @@ impl From<Event> for ws::Message {
         use Event::*;
 
         match event {
-            Stdout(_, data) => ws::Message::binary(data.as_bytes()),
+            Stdout(time, data) => {
+                ws::Message::text(serde_json::json!((time, "o", data)).to_string())
+            }
+
             Reset(cols, rows) => {
                 ws::Message::text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
             }
@@ -177,28 +180,27 @@ async fn read_file(
     Ok(())
 }
 
-fn feed_event(mut vt: VT, event: &Event) -> VT {
-    match &event {
-        Event::Reset(cols, rows) => {
-            vt = VT::new(*cols, *rows);
-        }
+#[derive(Debug)]
+struct ClientInitResponse {
+    epoch: Instant,
+    cols: usize,
+    rows: usize,
+    stdout: String,
+    broadcast_rx: broadcast::Receiver<Event>,
+}
 
-        Event::Stdout(_, text) => {
-            vt.feed_str(text);
+impl ClientInitResponse {
+    fn new(epoch: Instant, vt: &VT, broadcast_rx: broadcast::Receiver<Event>) -> Self {
+        Self {
+            epoch,
+            cols: vt.columns,
+            rows: vt.rows,
+            stdout: vt.dump(),
+            broadcast_rx,
         }
     }
-
-    vt
 }
 
-fn initial_events(vt: &VT) -> Vec<Event> {
-    vec![
-        Event::Reset(vt.columns, vt.rows),
-        Event::Stdout(0.0, vt.dump()),
-    ]
-}
-
-type ClientInitResponse = (Vec<Event>, broadcast::Receiver<Event>);
 type ClientInitRequest = oneshot::Sender<ClientInitResponse>;
 
 async fn handle_events(
@@ -209,21 +211,32 @@ async fn handle_events(
 ) -> Option<()> {
     let mut vt = VT::new(cols, rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
+    let mut epoch = Instant::now();
 
     loop {
         tokio::select! {
             value = stream_rx.recv() => {
                 let event = value?;
                 debug!("stream event: {:?}", event);
-                vt = feed_event(vt, &event);
+
+                match &event {
+                    Event::Reset(cols, rows) => {
+                        vt = VT::new(*cols, *rows);
+                        epoch = Instant::now();
+                    }
+
+                    Event::Stdout(_, data) => {
+                        vt.feed_str(data);
+                    }
+                }
+
                 let _ = broadcast_tx.send(event);
             }
 
             request = clients_rx.recv() => {
                 let reply_tx = request?;
-                let events = initial_events(&vt);
-                let broadcast_rx = broadcast_tx.subscribe();
-                reply_tx.send((events, broadcast_rx)).unwrap();
+                let response = ClientInitResponse::new(epoch, &vt, broadcast_tx.subscribe());
+                reply_tx.send(response).unwrap();
             }
         }
     }
@@ -240,16 +253,29 @@ async fn handle_websocket(
     websocket: ws::WebSocket,
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<()> {
-    let (events, mut broadcast_rx) = init_client(clients_tx).await?;
+    use Event::*;
+
     let (mut sender, _) = websocket.split();
+    let mut resp = init_client(clients_tx).await?;
+    let mut time_offset = (Instant::now() - resp.epoch).as_secs_f32();
 
-    for event in events {
-        sender.feed(event.into()).await?;
-    }
-
+    sender.feed(Reset(resp.cols, resp.rows).into()).await?;
+    sender.feed(Stdout(0.0, resp.stdout).into()).await?;
     sender.flush().await?;
 
-    while let Ok(event) = broadcast_rx.recv().await {
+    while let Ok(event) = resp.broadcast_rx.recv().await {
+        let mut event = event;
+
+        match event {
+            Reset(_, _) => {
+                time_offset = 0.0;
+            }
+
+            Stdout(time, data) => {
+                event = Stdout(time - time_offset, data);
+            }
+        }
+
         sender.send(event.into()).await?;
     }
 
@@ -280,26 +306,25 @@ fn ws_handler(
 async fn sse_stream(
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<impl Stream<Item = Result<sse::Event, Infallible>>> {
-    let (events, mut broadcast_rx) = init_client(clients_tx).await?;
+    use Event::*;
+
+    let mut resp = init_client(clients_tx).await?;
+    let mut time_offset = (Instant::now() - resp.epoch).as_secs_f32();
 
     let stream = stream! {
-        for event in events {
-            yield Ok::<sse::Event, Infallible>(event.into());
-        }
+        yield Ok(Reset(resp.cols, resp.rows).into());
+        yield Ok(Stdout(0.0, resp.stdout).into());
 
-        let mut now = Instant::now();
-
-        while let Ok(event) = broadcast_rx.recv().await {
+        while let Ok(event) = resp.broadcast_rx.recv().await {
             let mut event = event;
 
             match event {
-                Event::Reset(_, _) => {
-                    now = Instant::now();
+                Reset(_, _) => {
+                    time_offset = 0.0;
                 },
 
-                Event::Stdout(_, data) => {
-                    let time = now.elapsed().as_secs_f32();
-                    event = Event::Stdout(time, data);
+                Stdout(time, data) => {
+                    event = Event::Stdout(time - time_offset, data);
                 }
             }
 
