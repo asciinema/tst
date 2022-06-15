@@ -31,6 +31,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "vt",
  "warp",
  "warp-embed",
@@ -1119,6 +1120,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util 0.7.2",
 ]
 
 [[package]]

@@ -1,18 +1,19 @@
 use anyhow::{bail, Result};
-use async_stream::stream;
 use clap::{ArgEnum, Parser};
 use env_logger::Env;
-use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
+use futures_util::{stream, FutureExt, Stream, StreamExt};
 use log::{debug, info};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::convert::Infallible;
+use std::future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
+use tokio_stream::wrappers::BroadcastStream;
 use vt::VT;
 use warp::http::{self, Response};
 use warp::hyper::Body;
@@ -242,46 +243,52 @@ async fn handle_events(
     }
 }
 
-async fn init_client(clients_tx: mpsc::Sender<ClientInitRequest>) -> Result<ClientInitResponse> {
+async fn event_stream(
+    clients_tx: mpsc::Sender<ClientInitRequest>,
+) -> Result<impl Stream<Item = Event>> {
+    use Event::*;
+
     let (tx, rx) = oneshot::channel();
     clients_tx.send(tx).await?;
+    let resp = rx.await?;
+    let mut time_offset = (Instant::now() - resp.epoch).as_secs_f32();
+    let s1 = stream::iter(vec![Reset(resp.cols, resp.rows), Stdout(0.0, resp.stdout)]);
 
-    Ok(rx.await?)
+    let s2 = BroadcastStream::new(resp.broadcast_rx)
+        .take_while(|r| future::ready(r.is_ok()))
+        .map(Result::unwrap)
+        .map(move |mut event| {
+            match event {
+                Reset(_, _) => {
+                    time_offset = 0.0;
+                }
+
+                Stdout(time, data) => {
+                    event = Event::Stdout(time - time_offset, data);
+                }
+            }
+
+            event
+        });
+
+    Ok(s1.chain(s2))
+}
+
+async fn ws_stream(
+    clients_tx: mpsc::Sender<ClientInitRequest>,
+) -> Result<impl Stream<Item = Result<ws::Message, warp::Error>>> {
+    let s1 = event_stream(clients_tx).await?.map(|e| e.into());
+    let s2 = stream::iter(vec![ws::Message::close_with(1000u16, "done")]);
+    let stream = s1.chain(s2).map(Ok);
+
+    Ok(stream)
 }
 
 async fn handle_websocket(
     websocket: ws::WebSocket,
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<()> {
-    use Event::*;
-
-    let (mut sender, _) = websocket.split();
-    let mut resp = init_client(clients_tx).await?;
-    let mut time_offset = (Instant::now() - resp.epoch).as_secs_f32();
-
-    sender.feed(Reset(resp.cols, resp.rows).into()).await?;
-    sender.feed(Stdout(0.0, resp.stdout).into()).await?;
-    sender.flush().await?;
-
-    while let Ok(event) = resp.broadcast_rx.recv().await {
-        let mut event = event;
-
-        match event {
-            Reset(_, _) => {
-                time_offset = 0.0;
-            }
-
-            Stdout(time, data) => {
-                event = Stdout(time - time_offset, data);
-            }
-        }
-
-        sender.send(event.into()).await?;
-    }
-
-    sender
-        .send(ws::Message::close_with(1000u16, "done"))
-        .await?;
+    ws_stream(clients_tx).await?.forward(websocket).await?;
 
     Ok(())
 }
@@ -306,33 +313,9 @@ fn ws_handler(
 async fn sse_stream(
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<impl Stream<Item = Result<sse::Event, Infallible>>> {
-    use Event::*;
-
-    let mut resp = init_client(clients_tx).await?;
-    let mut time_offset = (Instant::now() - resp.epoch).as_secs_f32();
-
-    let stream = stream! {
-        yield Ok(Reset(resp.cols, resp.rows).into());
-        yield Ok(Stdout(0.0, resp.stdout).into());
-
-        while let Ok(event) = resp.broadcast_rx.recv().await {
-            let mut event = event;
-
-            match event {
-                Reset(_, _) => {
-                    time_offset = 0.0;
-                },
-
-                Stdout(time, data) => {
-                    event = Event::Stdout(time - time_offset, data);
-                }
-            }
-
-            yield Ok(event.into());
-        }
-
-        yield Ok(sse::Event::default().event("done").data("done"));
-    };
+    let s1 = event_stream(clients_tx).await?.map(|e| e.into());
+    let s2 = stream::iter(vec![sse::Event::default().event("done").data("done")]);
+    let stream = s1.chain(s2).map(Ok);
 
     Ok(stream)
 }
