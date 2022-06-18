@@ -40,6 +40,8 @@
 
     const params = new URLSearchParams(loc.hash.replace('#', '?'));
     const src = params.get('drv') === 'sse' ? sse_src : ws_src;
+    const bufferTime = params.get('bufferTime');
+    src.bufferTime = bufferTime === null ? 0 : parseFloat(bufferTime);
     const fit = params.get('fit');
     const terminalLineHeight = params.get('terminalLineHeight');
 
