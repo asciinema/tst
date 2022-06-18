@@ -3,6 +3,7 @@ use clap::{ArgEnum, Parser};
 use env_logger::Env;
 use futures_util::{stream, FutureExt, Stream, StreamExt};
 use log::{debug, info};
+use regex::Regex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::convert::Infallible;
@@ -135,6 +136,9 @@ where
     F: AsyncReadExt + std::marker::Unpin,
 {
     let mut buffer = [0; 1024];
+    let mut first_read = true;
+    let re =
+        Regex::new(r#"Script started on [^\s]+ [^\s]+ .*?COLUMNS="(\d+)" LINES="(\d+)""#).unwrap();
     let now = Instant::now();
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
@@ -142,11 +146,20 @@ where
             break;
         }
 
+        let str = String::from_utf8_lossy(&buffer[..n]);
+
+        if first_read {
+            if let Some(caps) = re.captures(&str) {
+                let cols: usize = caps[1].parse().unwrap();
+                let rows: usize = caps[2].parse().unwrap();
+                stream_tx.send(Event::Reset(cols, rows)).await?;
+            }
+
+            first_read = false;
+        }
+
         stream_tx
-            .send(Event::Stdout(
-                now.elapsed().as_secs_f32(),
-                String::from_utf8_lossy(&buffer[..n]).into_owned(),
-            ))
+            .send(Event::Stdout(now.elapsed().as_secs_f32(), str.into_owned()))
             .await?;
     }
 

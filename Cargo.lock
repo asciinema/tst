@@ -27,6 +27,7 @@ dependencies = [
  "env_logger",
  "futures-util",
  "log",
+ "regex",
  "rust-embed",
  "serde",
  "serde_json",

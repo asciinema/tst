@@ -20,3 +20,4 @@ warp-embed = "0.4.0"
 rust-embed = "6.4.0"
 async-stream = "0.3.3"
 tokio-stream = { version = "0.1.9", features = ["sync"] }
+regex = "1"
