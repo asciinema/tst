@@ -81,7 +81,7 @@ impl From<Event> for ws::Message {
             }
 
             Reset(cols, rows) => {
-                ws::Message::text(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows))
+                ws::Message::text(format!("{{\"cols\": {cols}, \"rows\": {rows}}}"))
             }
         }
     }
@@ -95,7 +95,7 @@ impl From<Event> for sse::Event {
 
         match event {
             Stdout(time, data) => e.json_data((time, "o", data)).unwrap(),
-            Reset(cols, rows) => e.data(format!("{{\"cols\": {}, \"rows\": {}}}", cols, rows)),
+            Reset(cols, rows) => e.data(format!("{{\"cols\": {cols}, \"rows\": {rows}}}")),
         }
     }
 }
