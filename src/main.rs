@@ -196,7 +196,7 @@ async fn read_file(
 
 #[derive(Debug)]
 struct ClientInitResponse {
-    epoch: Instant,
+    stream_time: f32,
     cols: usize,
     rows: usize,
     stdout: String,
@@ -204,9 +204,9 @@ struct ClientInitResponse {
 }
 
 impl ClientInitResponse {
-    fn new(epoch: Instant, vt: &VT, broadcast_rx: broadcast::Receiver<Event>) -> Self {
+    fn new(stream_time: f32, vt: &VT, broadcast_rx: broadcast::Receiver<Event>) -> Self {
         Self {
-            epoch,
+            stream_time,
             cols: vt.columns,
             rows: vt.rows,
             stdout: vt.dump(),
@@ -225,7 +225,8 @@ async fn handle_events(
 ) -> Option<()> {
     let mut vt = VT::new(cols, rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
-    let mut epoch = Instant::now();
+    let mut last_stream_time = 0.0;
+    let mut last_feed_time = Instant::now();
 
     loop {
         tokio::select! {
@@ -236,11 +237,12 @@ async fn handle_events(
                 match &event {
                     Event::Reset(cols, rows) => {
                         vt = VT::new(*cols, *rows);
-                        epoch = Instant::now();
                     }
 
-                    Event::Stdout(_, data) => {
+                    Event::Stdout(time, data) => {
                         vt.feed_str(data);
+                        last_stream_time = *time;
+                        last_feed_time = Instant::now();
                     }
                 }
 
@@ -249,7 +251,8 @@ async fn handle_events(
 
             request = clients_rx.recv() => {
                 let reply_tx = request?;
-                let response = ClientInitResponse::new(epoch, &vt, broadcast_tx.subscribe());
+                let stream_time = last_stream_time + (Instant::now() - last_feed_time).as_secs_f32();
+                let response = ClientInitResponse::new(stream_time, &vt, broadcast_tx.subscribe());
                 reply_tx.send(response).unwrap();
             }
         }
@@ -264,25 +267,14 @@ async fn event_stream(
     let (tx, rx) = oneshot::channel();
     clients_tx.send(tx).await?;
     let resp = rx.await?;
-    let mut time_offset = (Instant::now() - resp.epoch).as_secs_f32();
-    let s1 = stream::iter(vec![Reset(resp.cols, resp.rows), Stdout(0.0, resp.stdout)]);
+    let s1 = stream::iter(vec![
+        Reset(resp.cols, resp.rows),
+        Stdout(resp.stream_time, resp.stdout),
+    ]);
 
     let s2 = BroadcastStream::new(resp.broadcast_rx)
         .take_while(|r| future::ready(r.is_ok()))
-        .map(Result::unwrap)
-        .map(move |mut event| {
-            match event {
-                Reset(_, _) => {
-                    time_offset = 0.0;
-                }
-
-                Stdout(time, data) => {
-                    event = Event::Stdout(time - time_offset, data);
-                }
-            }
-
-            event
-        });
+        .map(Result::unwrap);
 
     Ok(s1.chain(s2))
 }
