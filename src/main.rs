@@ -67,36 +67,45 @@ struct Assets;
 
 #[derive(Debug, Clone)]
 enum Event {
+    Reset(usize, usize, Option<String>, Option<f32>),
     Stdout(f32, String),
-    Reset(usize, usize),
 }
 
-impl From<Event> for ws::Message {
+impl From<Event> for serde_json::Value {
     fn from(event: Event) -> Self {
         use Event::*;
 
         match event {
-            Stdout(time, data) => {
-                ws::Message::text(serde_json::json!((time, "o", data)).to_string())
+            Reset(cols, rows, init, time) => {
+                serde_json::json!({
+                    "cols": cols,
+                    "rows": rows,
+                    "init": init,
+                    "time": time
+                })
             }
 
-            Reset(cols, rows) => {
-                ws::Message::text(format!("{{\"cols\": {cols}, \"rows\": {rows}}}"))
+            Stdout(time, data) => {
+                serde_json::json!((time, "o", data))
             }
         }
     }
 }
 
+impl From<Event> for ws::Message {
+    fn from(event: Event) -> Self {
+        let json_value: serde_json::Value = event.into();
+
+        ws::Message::text(json_value.to_string())
+    }
+}
+
 impl From<Event> for sse::Event {
     fn from(event: Event) -> Self {
-        use Event::*;
+        let sse_event = sse::Event::default();
+        let json_value: serde_json::Value = event.into();
 
-        let e = sse::Event::default();
-
-        match event {
-            Stdout(time, data) => e.json_data((time, "o", data)).unwrap(),
-            Reset(cols, rows) => e.data(format!("{{\"cols\": {cols}, \"rows\": {rows}}}")),
-        }
+        sse_event.data(json_value.to_string())
     }
 }
 
@@ -112,7 +121,7 @@ where
             Some('{') => {
                 let header = serde_json::from_str::<Header>(&line)?;
                 stream_tx
-                    .send(Event::Reset(header.width, header.height))
+                    .send(Event::Reset(header.width, header.height, None, None))
                     .await?;
             }
 
@@ -152,7 +161,7 @@ where
             if let Some(caps) = re.captures(&str) {
                 let cols: usize = caps[1].parse().unwrap();
                 let rows: usize = caps[2].parse().unwrap();
-                stream_tx.send(Event::Reset(cols, rows)).await?;
+                stream_tx.send(Event::Reset(cols, rows, None, None)).await?;
             }
 
             first_read = false;
@@ -235,8 +244,10 @@ async fn handle_events(
                 debug!("stream event: {:?}", event);
 
                 match &event {
-                    Event::Reset(cols, rows) => {
+                    Event::Reset(cols, rows, _, _) => {
                         vt = VT::new(*cols, *rows);
+                        last_stream_time = 0.0;
+                        last_feed_time = Instant::now();
                     }
 
                     Event::Stdout(time, data) => {
@@ -267,10 +278,13 @@ async fn event_stream(
     let (tx, rx) = oneshot::channel();
     clients_tx.send(tx).await?;
     let resp = rx.await?;
-    let s1 = stream::iter(vec![
-        Reset(resp.cols, resp.rows),
-        Stdout(resp.stream_time, resp.stdout),
-    ]);
+
+    let s1 = stream::iter(vec![Reset(
+        resp.cols,
+        resp.rows,
+        Some(resp.stdout),
+        Some(resp.stream_time),
+    )]);
 
     let s2 = BroadcastStream::new(resp.broadcast_rx)
         .take_while(|r| future::ready(r.is_ok()))
