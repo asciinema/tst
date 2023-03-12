@@ -46,6 +46,7 @@
     const terminalLineHeight = params.get('terminalLineHeight');
 
     const opts = {
+      logger: console,
       fit: fit === null ? 'both' : fit,
       theme: params.get('theme'),
       autoPlay: params.get('autoPlay') !== 'false',
