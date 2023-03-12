@@ -28,18 +28,18 @@
   <script>
     const loc = window.location;
 
-    const ws_src = {
+    const wsSrc = {
       driver: 'websocket',
       url: loc.protocol.replace("http", "ws") + '//' + loc.host + '/ws'
     };
 
-    const sse_src = {
+    const sseSrc = {
       driver: 'eventsource',
       url: loc.protocol + '//' + loc.host + '/sse'
     };
 
     const params = new URLSearchParams(loc.hash.replace('#', '?'));
-    const src = params.get('drv') === 'sse' ? sse_src : ws_src;
+    const src = params.get('drv') === 'sse' ? sseSrc : wsSrc;
     const bufferTime = params.get('bufferTime');
     src.bufferTime = bufferTime === null ? 0 : parseFloat(bufferTime);
     const fit = params.get('fit');
