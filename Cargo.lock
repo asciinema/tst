@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "avt",
  "clap",
  "env_logger",
  "futures-util",
@@ -33,7 +34,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
- "vt",
  "warp",
  "warp-embed",
 ]
@@ -76,6 +76,15 @@ name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
+
+[[package]]
+name = "avt"
+version = "0.5.1"
+source = "git+https://github.com/asciinema/avt.git#5eb348905db3e9f1441b8f80da637a62596323f3"
+dependencies = [
+ "rgb",
+ "serde",
+]
 
 [[package]]
 name = "base64"
@@ -1275,15 +1284,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vt"
-version = "0.5.0"
-source = "git+https://github.com/asciinema/vt-rs.git#c25b2c30aebae8fd994646c8697f16387218e616"
-dependencies = [
- "rgb",
- "serde",
-]
 
 [[package]]
 name = "walkdir"

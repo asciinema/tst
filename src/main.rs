@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use avt::Vt;
 use clap::{ArgEnum, Parser};
 use env_logger::Env;
 use futures_util::{stream, FutureExt, Stream, StreamExt};
@@ -15,7 +16,6 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_stream::wrappers::BroadcastStream;
-use vt::VT;
 use warp::http::{self, Response};
 use warp::hyper::Body;
 use warp::sse;
@@ -213,7 +213,7 @@ struct ClientInitResponse {
 }
 
 impl ClientInitResponse {
-    fn new(stream_time: f32, vt: &VT, broadcast_rx: broadcast::Receiver<Event>) -> Self {
+    fn new(stream_time: f32, vt: &Vt, broadcast_rx: broadcast::Receiver<Event>) -> Self {
         Self {
             stream_time,
             cols: vt.columns,
@@ -232,7 +232,7 @@ async fn handle_events(
     mut stream_rx: mpsc::Receiver<Event>,
     mut clients_rx: mpsc::Receiver<ClientInitRequest>,
 ) -> Option<()> {
-    let mut vt = VT::new(cols, rows);
+    let mut vt = Vt::new(cols, rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
     let mut last_stream_time = 0.0;
     let mut last_feed_time = Instant::now();
@@ -245,7 +245,7 @@ async fn handle_events(
 
                 match &event {
                     Event::Reset(cols, rows, _, _) => {
-                        vt = VT::new(*cols, *rows);
+                        vt = Vt::new(*cols, *rows);
                         last_stream_time = 0.0;
                         last_feed_time = Instant::now();
                     }
