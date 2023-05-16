@@ -69,6 +69,7 @@ struct Assets;
 enum Event {
     Reset(usize, usize, Option<String>, Option<f32>),
     Stdout(f32, String),
+    Offline,
 }
 
 impl From<Event> for serde_json::Value {
@@ -76,18 +77,16 @@ impl From<Event> for serde_json::Value {
         use Event::*;
 
         match event {
-            Reset(cols, rows, init, time) => {
-                serde_json::json!({
-                    "cols": cols,
-                    "rows": rows,
-                    "init": init,
-                    "time": time
-                })
-            }
+            Reset(cols, rows, init, time) => serde_json::json!({
+                "cols": cols,
+                "rows": rows,
+                "init": init,
+                "time": time
+            }),
 
-            Stdout(time, data) => {
-                serde_json::json!((time, "o", data))
-            }
+            Stdout(time, data) => serde_json::json!((time, "o", data)),
+
+            Offline => serde_json::json!({ "state": "offline" }),
         }
     }
 }
@@ -193,6 +192,8 @@ async fn read_file(
             InputFormat::Raw => read_raw_file(file, &stream_tx).await?,
         }
 
+        stream_tx.send(Event::Offline).await?;
+
         if let Some(filename) = &filename {
             file = Box::pin(Box::new(File::open(filename).await?));
         } else {
@@ -205,6 +206,7 @@ async fn read_file(
 
 #[derive(Debug)]
 struct ClientInitResponse {
+    online: bool,
     stream_time: f32,
     cols: usize,
     rows: usize,
@@ -213,8 +215,14 @@ struct ClientInitResponse {
 }
 
 impl ClientInitResponse {
-    fn new(stream_time: f32, vt: &Vt, broadcast_rx: broadcast::Receiver<Event>) -> Self {
+    fn new(
+        online: bool,
+        stream_time: f32,
+        vt: &Vt,
+        broadcast_rx: broadcast::Receiver<Event>,
+    ) -> Self {
         Self {
+            online,
             stream_time,
             cols: vt.cols,
             rows: vt.rows,
@@ -236,6 +244,7 @@ async fn handle_events(
     let (broadcast_tx, _) = broadcast::channel(1024);
     let mut last_stream_time = 0.0;
     let mut last_feed_time = Instant::now();
+    let mut online = false;
 
     loop {
         tokio::select! {
@@ -248,12 +257,17 @@ async fn handle_events(
                         vt = Vt::new(*cols, *rows);
                         last_stream_time = 0.0;
                         last_feed_time = Instant::now();
+                        online = true;
                     }
 
                     Event::Stdout(time, data) => {
                         vt.feed_str(data);
                         last_stream_time = *time;
                         last_feed_time = Instant::now();
+                    }
+
+                    Event::Offline => {
+                        online = false;
                     }
                 }
 
@@ -263,7 +277,7 @@ async fn handle_events(
             request = clients_rx.recv() => {
                 let reply_tx = request?;
                 let stream_time = last_stream_time + (Instant::now() - last_feed_time).as_secs_f32();
-                let response = ClientInitResponse::new(stream_time, &vt, broadcast_tx.subscribe());
+                let response = ClientInitResponse::new(online, stream_time, &vt, broadcast_tx.subscribe());
                 reply_tx.send(response).unwrap();
             }
         }
@@ -279,12 +293,18 @@ async fn event_stream(
     clients_tx.send(tx).await?;
     let resp = rx.await?;
 
-    let s1 = stream::iter(vec![Reset(
-        resp.cols,
-        resp.rows,
-        Some(resp.stdout),
-        Some(resp.stream_time),
-    )]);
+    let init_event = if resp.online {
+        Reset(
+            resp.cols,
+            resp.rows,
+            Some(resp.stdout),
+            Some(resp.stream_time),
+        )
+    } else {
+        Offline
+    };
+
+    let s1 = stream::iter(vec![init_event]);
 
     let s2 = BroadcastStream::new(resp.broadcast_rx)
         .take_while(|r| future::ready(r.is_ok()))
