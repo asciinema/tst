@@ -210,7 +210,7 @@ struct ClientInitResponse {
     stream_time: f32,
     cols: usize,
     rows: usize,
-    stdout: String,
+    init: String,
     broadcast_rx: broadcast::Receiver<Event>,
 }
 
@@ -226,7 +226,7 @@ impl ClientInitResponse {
             stream_time,
             cols: vt.cols,
             rows: vt.rows,
-            stdout: vt.dump(),
+            init: vt.dump(),
             broadcast_rx,
         }
     }
@@ -297,7 +297,7 @@ async fn event_stream(
         Reset(
             resp.cols,
             resp.rows,
-            Some(resp.stdout),
+            Some(resp.init),
             Some(resp.stream_time),
         )
     } else {
