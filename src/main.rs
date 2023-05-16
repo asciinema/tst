@@ -216,7 +216,7 @@ impl ClientInitResponse {
     fn new(stream_time: f32, vt: &Vt, broadcast_rx: broadcast::Receiver<Event>) -> Self {
         Self {
             stream_time,
-            cols: vt.columns,
+            cols: vt.cols,
             rows: vt.rows,
             stdout: vt.dump(),
             broadcast_rx,
