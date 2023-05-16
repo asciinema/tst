@@ -41,7 +41,7 @@
     const params = new URLSearchParams(loc.hash.replace('#', '?'));
     const src = params.get('drv') === 'sse' ? sseSrc : wsSrc;
     const bufferTime = params.get('bufferTime');
-    src.bufferTime = bufferTime === null ? 0 : parseFloat(bufferTime);
+    src.bufferTime = bufferTime === null ? 0.1 : parseFloat(bufferTime);
     const fit = params.get('fit');
     const terminalLineHeight = params.get('terminalLineHeight');
 
