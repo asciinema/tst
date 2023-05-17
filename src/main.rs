@@ -146,7 +146,7 @@ where
     let mut buffer = [0; 1024];
     let mut first_read = true;
     let script_header_re =
-        Regex::new(r#"Script started on [^\s]+ [^\s]+ .*?COLUMNS="(\d+)" LINES="(\d+)""#).unwrap();
+        Regex::new(r#"Script started on [^\s]+ [^\s]+ .*?COLUMNS="(\d{1,3})" LINES="(\d{1,3})""#).unwrap();
     let resize_seq_re = Regex::new(r#"\x1b\[8;(\d{1,3});(\d{1,3})t"#).unwrap();
     let now = Instant::now();
 
