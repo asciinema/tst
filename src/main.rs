@@ -145,8 +145,9 @@ where
 {
     let mut buffer = [0; 1024];
     let mut first_read = true;
-    let re =
+    let script_header_re =
         Regex::new(r#"Script started on [^\s]+ [^\s]+ .*?COLUMNS="(\d+)" LINES="(\d+)""#).unwrap();
+    let resize_seq_re = Regex::new(r#"\x1b\[8;(\d{1,3});(\d{1,3})t"#).unwrap();
     let now = Instant::now();
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
@@ -157,9 +158,13 @@ where
         let str = String::from_utf8_lossy(&buffer[..n]);
 
         if first_read {
-            if let Some(caps) = re.captures(&str) {
+            if let Some(caps) = script_header_re.captures(&str) {
                 let cols: usize = caps[1].parse().unwrap();
                 let rows: usize = caps[2].parse().unwrap();
+                stream_tx.send(Event::Reset(cols, rows, None, None)).await?;
+            } else if let Some(caps) = resize_seq_re.captures(&str) {
+                let cols: usize = caps[2].parse().unwrap();
+                let rows: usize = caps[1].parse().unwrap();
                 stream_tx.send(Event::Reset(cols, rows, None, None)).await?;
             }
 
