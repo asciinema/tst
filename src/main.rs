@@ -21,6 +21,9 @@ use warp::hyper::Body;
 use warp::sse;
 use warp::ws;
 use warp::{Filter, Reply};
+mod alis_encoder;
+mod compressor;
+mod lzw_compressor;
 
 #[derive(Clone, Debug, ArgEnum)]
 enum InputFormat {
@@ -87,46 +90,6 @@ impl From<Event> for serde_json::Value {
             Stdout(time, data) => serde_json::json!((time, "o", data)),
 
             Offline => serde_json::json!({ "state": "offline" }),
-        }
-    }
-}
-
-impl From<Event> for ws::Message {
-    fn from(event: Event) -> Self {
-        match event {
-            Event::Reset(cols, rows, init, time) => {
-                let cols_bytes = (cols as u16).to_le_bytes();
-                let rows_bytes = (rows as u16).to_le_bytes();
-                let time_bytes = time.unwrap_or(0.0).to_le_bytes();
-                let init = init.unwrap_or_else(|| "".to_owned());
-                let init_len = init.len() as u32;
-                let init_len_bytes = init_len.to_le_bytes();
-                let init_bytes = init.as_bytes();
-
-                let mut msg = vec![0x01]; // 1 byte
-                msg.extend_from_slice(&cols_bytes); // 2 bytes
-                msg.extend_from_slice(&rows_bytes); // 2 bytes
-                msg.extend_from_slice(&time_bytes); // 4 bytes
-                msg.extend_from_slice(&init_len_bytes); // 4 bytes
-                msg.extend_from_slice(init_bytes); // init_len bytes
-
-                ws::Message::binary(msg)
-            }
-
-            Event::Stdout(time, text) => {
-                let time_bytes = time.to_le_bytes();
-                let text_len = text.len() as u32;
-                let text_len_bytes = text_len.to_le_bytes();
-
-                let mut msg = vec![b'o']; // 1 byte
-                msg.extend_from_slice(&time_bytes); // 4 bytes
-                msg.extend_from_slice(&text_len_bytes); // 4 bytes
-                msg.extend_from_slice(text.as_bytes()); // text_len bytes
-
-                ws::Message::binary(msg)
-            }
-
-            Event::Offline => ws::Message::binary([0x04]),
         }
     }
 }
@@ -354,12 +317,17 @@ async fn event_stream(
 async fn ws_stream(
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<impl Stream<Item = Result<ws::Message, warp::Error>>> {
-    let s1 = stream::once(future::ready(ws::Message::binary("ALiS\x01")));
-    let s2 = event_stream(clients_tx).await?.map(|e| e.into());
-    let s3 = stream::once(future::ready(ws::Message::close_with(1000u16, "done")));
-    let stream = s1.chain(s2).chain(s3).map(Ok);
+    let mut alis_encoder = alis_encoder::AlisEncoder::default();
 
-    Ok(stream)
+    let s1 = stream::once(future::ready(ws::Message::binary(alis_encoder.header())));
+
+    let s2 = event_stream(clients_tx)
+        .await?
+        .map(move |e| ws::Message::binary(alis_encoder.encode(e)));
+
+    let s3 = stream::once(future::ready(ws::Message::close_with(1000u16, "done")));
+
+    Ok(s1.chain(s2).chain(s3).map(Ok))
 }
 
 async fn handle_websocket(
