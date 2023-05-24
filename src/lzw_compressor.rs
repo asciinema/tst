@@ -1,6 +1,8 @@
 use crate::compressor::Compressor;
 use std::collections::HashMap;
 
+const MAX_DICT_SIZE: usize = 4096;
+
 pub(crate) struct LzwCompressor {
     dictionary: HashMap<Vec<u8>, u16>,
 }
@@ -38,7 +40,12 @@ impl Compressor for LzwCompressor {
                 seq = seq_c;
             } else {
                 output.push(self.dictionary[&seq]);
-                self.dictionary.insert(seq_c, self.dictionary.len() as u16);
+                let size = self.dictionary.len();
+
+                if size < MAX_DICT_SIZE {
+                    self.dictionary.insert(seq_c, size as u16);
+                }
+
                 seq = vec![*c];
             }
         }
