@@ -44,6 +44,8 @@ impl Compressor for LzwCompressor {
 
                 if size < MAX_DICT_SIZE {
                     self.dictionary.insert(seq_c, size as u16);
+                } else {
+                    self.reset_dictionary();
                 }
 
                 seq = vec![*c];
