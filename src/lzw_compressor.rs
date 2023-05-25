@@ -1,16 +1,19 @@
 use crate::compressor::Compressor;
 use std::collections::HashMap;
 
-const MAX_DICT_SIZE: usize = 4096;
+const MAX_DICT_SIZE: u16 = 4096;
+const RESET_CODE: u16 = 256;
 
 pub(crate) struct LzwCompressor {
     dictionary: HashMap<Vec<u8>, u16>,
+    next_code: u16,
 }
 
 impl LzwCompressor {
     pub fn new() -> Self {
         let mut encoder = LzwCompressor {
             dictionary: HashMap::new(),
+            next_code: RESET_CODE + 1,
         };
 
         encoder.reset_dictionary();
@@ -20,6 +23,7 @@ impl LzwCompressor {
 
     fn reset_dictionary(&mut self) {
         self.dictionary.clear();
+        self.next_code = RESET_CODE + 1;
 
         for c in 0..=255 {
             self.dictionary.insert(vec![c], c as u16);
@@ -40,12 +44,13 @@ impl Compressor for LzwCompressor {
                 seq = seq_c;
             } else {
                 output.push(self.dictionary[&seq]);
-                let size = self.dictionary.len();
 
-                if size < MAX_DICT_SIZE {
-                    self.dictionary.insert(seq_c, size as u16);
+                if self.next_code < MAX_DICT_SIZE {
+                    self.dictionary.insert(seq_c, self.next_code);
+                    self.next_code += 1;
                 } else {
                     self.reset_dictionary();
+                    output.push(RESET_CODE);
                 }
 
                 seq = vec![*c];
