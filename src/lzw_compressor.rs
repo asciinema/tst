@@ -57,7 +57,7 @@ impl Compressor for LzwCompressor {
             }
         }
 
-        if seq.len() > 0 {
+        if !seq.is_empty() {
             output.push(self.dictionary[&seq]);
         }
 
