@@ -80,17 +80,17 @@ mod tests {
         let in1: Vec<u8> = vec![1, 2, 3, 2, 3, 1, 3, 4, 5, 2, 4, 2, 3, 1, 5];
         let out1 = to_vec_u16(compressor.compress(&in1));
 
-        assert_eq!(out1, vec![1, 2, 3, 257, 1, 3, 4, 5, 2, 4, 259, 5]);
+        assert_eq!(out1, vec![1, 2, 3, 258, 1, 3, 4, 5, 2, 4, 260, 5]);
 
         let in2: Vec<u8> = vec![1, 2, 3, 2, 3, 1, 3, 4, 5, 2, 4, 2, 3, 1, 5];
         let out2 = to_vec_u16(compressor.compress(&in2));
 
-        assert_eq!(out2, vec![256, 258, 3, 260, 262, 264, 266]);
+        assert_eq!(out2, vec![257, 259, 3, 261, 263, 265, 267]);
 
         let in3: Vec<u8> = vec![6, 2, 3, 1, 5, 6, 2];
         let out3 = to_vec_u16(compressor.compress(&in3));
 
-        assert_eq!(out3, vec![6, 266, 273]);
+        assert_eq!(out3, vec![6, 267, 274]);
     }
 
     fn to_vec_u16(input: Vec<u8>) -> Vec<u16> {
