@@ -29,6 +29,24 @@ impl LzwCompressor {
             self.dictionary.insert(vec![c], c as u16);
         }
     }
+
+    fn encode(chunk: &[u16]) -> Vec<u8> {
+        match *chunk {
+            [first, second] => {
+                vec![
+                    (first >> 4) as u8,
+                    (((first & 0x0F) as u8) << 4) | ((second >> 8) as u8),
+                    (second & 0xFF) as u8,
+                ]
+            }
+
+            [only] => {
+                vec![(only >> 4) as u8, ((only & 0x0F) as u8) << 4]
+            }
+
+            _ => vec![],
+        }
+    }
 }
 
 impl Compressor for LzwCompressor {
@@ -61,10 +79,7 @@ impl Compressor for LzwCompressor {
             output.push(self.dictionary[&seq]);
         }
 
-        output
-            .into_iter()
-            .flat_map(|code| code.to_le_bytes())
-            .collect()
+        output.chunks(2).flat_map(LzwCompressor::encode).collect()
     }
 }
 
@@ -94,9 +109,23 @@ mod tests {
     }
 
     fn to_vec_u16(input: Vec<u8>) -> Vec<u16> {
-        input
-            .chunks(2)
-            .map(|x| u16::from_le_bytes([x[0], x[1]]))
-            .collect()
+        input.chunks(3).flat_map(decode).collect()
+    }
+
+    fn decode(chunk: &[u8]) -> Vec<u16> {
+        match *chunk {
+            [first, second, third] => {
+                vec![
+                    ((first as u16) << 4) | ((second as u16) >> 4),
+                    (((second as u16) & 0x0F) << 8) | (third as u16),
+                ]
+            }
+
+            [first, second] => {
+                vec![((first as u16) << 4) | ((second as u16) >> 4)]
+            }
+
+            _ => vec![],
+        }
     }
 }
