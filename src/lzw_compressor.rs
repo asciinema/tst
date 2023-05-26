@@ -74,7 +74,7 @@ mod tests {
     use super::LzwCompressor;
 
     #[test]
-    fn encode() {
+    fn compress() {
         let mut compressor = LzwCompressor::new();
 
         let in1: Vec<u8> = vec![1, 2, 3, 2, 3, 1, 3, 4, 5, 2, 4, 2, 3, 1, 5];
