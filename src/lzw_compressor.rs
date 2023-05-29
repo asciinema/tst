@@ -3,10 +3,15 @@ use std::collections::HashMap;
 
 const MAX_DICT_SIZE: u16 = 4096;
 const RESET_CODE: u16 = 256;
+const CHECKPOINT_INTERVAL: usize = 16 * 1024;
 
 pub(crate) struct LzwCompressor {
     dictionary: HashMap<Vec<u8>, u16>,
     next_code: u16,
+    input_len: usize,
+    output_len: f32,
+    checkpoint: usize,
+    ratio: f32,
 }
 
 impl LzwCompressor {
@@ -14,6 +19,10 @@ impl LzwCompressor {
         let mut encoder = LzwCompressor {
             dictionary: HashMap::new(),
             next_code: RESET_CODE + 1,
+            input_len: 0,
+            output_len: 0.0,
+            checkpoint: 0,
+            ratio: 0.0,
         };
 
         encoder.reset_dictionary();
@@ -55,6 +64,7 @@ impl Compressor for LzwCompressor {
         let mut seq: Vec<u8> = Vec::new();
 
         for c in input {
+            self.input_len += 1;
             let mut seq_c = seq.clone();
             seq_c.push(*c);
 
@@ -62,13 +72,28 @@ impl Compressor for LzwCompressor {
                 seq = seq_c;
             } else {
                 output.push(self.dictionary[&seq]);
+                self.output_len += 1.5;
 
                 if self.next_code < MAX_DICT_SIZE {
                     self.dictionary.insert(seq_c, self.next_code);
                     self.next_code += 1;
-                } else {
-                    self.reset_dictionary();
-                    output.push(RESET_CODE);
+                } else if self.ratio == 0.0 {
+                    self.ratio = ((self.output_len * 3.0) / 4.0) / (self.input_len as f32);
+                    self.checkpoint = self.input_len + CHECKPOINT_INTERVAL;
+                } else if self.input_len > self.checkpoint {
+                    let ratio = ((self.output_len * 3.0) / 4.0) / (self.input_len as f32);
+
+                    if self.ratio - ratio < 0.0 {
+                        self.reset_dictionary();
+                        output.push(RESET_CODE);
+                        self.ratio = 0.0;
+                        self.input_len = 0;
+                        self.output_len = 0.0;
+                    } else {
+                        self.ratio = ratio;
+                    }
+
+                    self.checkpoint = self.input_len + CHECKPOINT_INTERVAL;
                 }
 
                 seq = vec![*c];
@@ -77,6 +102,7 @@ impl Compressor for LzwCompressor {
 
         if !seq.is_empty() {
             output.push(self.dictionary[&seq]);
+            self.output_len += 1.5;
         }
 
         output.chunks(2).flat_map(LzwCompressor::encode).collect()
