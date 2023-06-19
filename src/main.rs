@@ -22,8 +22,6 @@ use warp::sse;
 use warp::ws;
 use warp::{Filter, Reply};
 mod alis_encoder;
-mod compressor;
-mod lzw_compressor;
 
 #[derive(Clone, Debug, ArgEnum)]
 enum InputFormat {
