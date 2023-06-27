@@ -310,27 +310,27 @@ async fn event_stream(
     Ok(s1.chain(s2))
 }
 
-async fn ws_stream(
+async fn alis_stream(
     clients_tx: mpsc::Sender<ClientInitRequest>,
-) -> Result<impl Stream<Item = Result<ws::Message, warp::Error>>> {
+) -> Result<impl Stream<Item = Vec<u8>>> {
     let mut alis_encoder = alis_encoder::AlisEncoder::default();
 
-    let s1 = stream::once(future::ready(ws::Message::binary(alis_encoder.header())));
+    let s1 = stream::once(future::ready(alis_encoder.header()));
 
     let s2 = event_stream(clients_tx)
         .await?
-        .map(move |e| ws::Message::binary(alis_encoder.encode(e)));
+        .map(move |e| alis_encoder.encode(e));
 
-    let s3 = stream::once(future::ready(ws::Message::close_with(1000u16, "done")));
-
-    Ok(s1.chain(s2).chain(s3).map(Ok))
+    Ok(s1.chain(s2))
 }
 
 async fn handle_websocket(
     websocket: ws::WebSocket,
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<()> {
-    ws_stream(clients_tx).await?.forward(websocket).await?;
+    let s1 = alis_stream(clients_tx).await?.map(ws::Message::binary);
+    let s2 = stream::once(future::ready(ws::Message::close_with(1000u16, "done")));
+    s1.chain(s2).map(Ok).forward(websocket).await?;
 
     Ok(())
 }
