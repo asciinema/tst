@@ -301,7 +301,7 @@ async fn event_stream(
         Offline
     };
 
-    let s1 = stream::iter(vec![init_event]);
+    let s1 = stream::once(future::ready(init_event));
 
     let s2 = BroadcastStream::new(resp.broadcast_rx)
         .take_while(|r| future::ready(r.is_ok()))
