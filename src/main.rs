@@ -110,7 +110,7 @@ impl From<Event> for serde_json::Value {
 
             Stdout(time, data) => serde_json::json!((time, "o", data)),
 
-            Offline => serde_json::json!({ "state": "offline" }),
+            Offline => serde_json::json!({ "status": "offline" }),
         }
     }
 }
