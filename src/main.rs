@@ -288,7 +288,7 @@ async fn forwarder(clients_tx: mpsc::Sender<ClientInitRequest>, url: url::Url) -
         }
 
         let delay = exponential_delay(reconnect_attempt);
-        reconnect_attempt += 1;
+        reconnect_attempt = (reconnect_attempt + 1).min(10);
         info!("forwarder: connection closed, reconnecting in {delay}");
         tokio::time::sleep(time::Duration::from_millis(delay)).await;
     }
