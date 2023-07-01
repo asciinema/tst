@@ -90,22 +90,29 @@ struct Cli {
 struct Assets;
 
 #[derive(Debug, Clone)]
-enum Event {
-    Reset(usize, usize, Option<String>, Option<f32>),
+enum InputEvent {
+    Reset(Option<(usize, usize)>),
+    Stdout(f32, String),
+    Closed,
+}
+
+#[derive(Debug, Clone)]
+enum StreamEvent {
+    Reset((usize, usize), f32, Option<String>),
     Stdout(f32, String),
     Offline,
 }
 
-impl From<Event> for serde_json::Value {
-    fn from(event: Event) -> Self {
-        use Event::*;
+impl From<StreamEvent> for serde_json::Value {
+    fn from(event: StreamEvent) -> Self {
+        use StreamEvent::*;
 
         match event {
-            Reset(cols, rows, init, time) => serde_json::json!({
+            Reset((cols, rows), time, init) => serde_json::json!({
                 "cols": cols,
                 "rows": rows,
+                "time": time,
                 "init": init,
-                "time": time
             }),
 
             Stdout(time, data) => serde_json::json!((time, "o", data)),
@@ -115,8 +122,8 @@ impl From<Event> for serde_json::Value {
     }
 }
 
-impl From<Event> for sse::Event {
-    fn from(event: Event) -> Self {
+impl From<StreamEvent> for sse::Event {
+    fn from(event: StreamEvent) -> Self {
         let sse_event = sse::Event::default();
         let json_value: serde_json::Value = event.into();
 
@@ -124,10 +131,12 @@ impl From<Event> for sse::Event {
     }
 }
 
-async fn read_asciicast_file<F>(file: F, stream_tx: &mpsc::Sender<Event>) -> Result<()>
+async fn read_asciicast_file<F>(file: F, stream_tx: &mpsc::Sender<InputEvent>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
 {
+    use InputEvent::*;
+
     let buf_reader = tokio::io::BufReader::new(file);
     let mut lines = buf_reader.lines();
 
@@ -136,7 +145,7 @@ where
             Some('{') => {
                 let header = serde_json::from_str::<Header>(&line)?;
                 stream_tx
-                    .send(Event::Reset(header.width, header.height, None, None))
+                    .send(Reset(Some((header.width, header.height))))
                     .await?;
             }
 
@@ -144,7 +153,7 @@ where
                 let (time, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
 
                 if event_type == "o" {
-                    stream_tx.send(Event::Stdout(time, data)).await?;
+                    stream_tx.send(Stdout(time, data)).await?;
                 }
             }
 
@@ -155,10 +164,12 @@ where
     Ok(())
 }
 
-async fn read_raw_file<F>(mut file: F, stream_tx: &mpsc::Sender<Event>) -> Result<()>
+async fn read_raw_file<F>(mut file: F, stream_tx: &mpsc::Sender<InputEvent>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
 {
+    use InputEvent::*;
+
     let mut buffer = [0; 1024];
     let mut first_read = true;
     let script_header_re = Regex::new(r#"\[.*COLUMNS="(\d{1,3})" LINES="(\d{1,3})".*\]"#).unwrap();
@@ -173,21 +184,25 @@ where
         let str = String::from_utf8_lossy(&buffer[..n]);
 
         if first_read {
-            if let Some(caps) = script_header_re.captures(&str) {
+            let size = if let Some(caps) = script_header_re.captures(&str) {
                 let cols: usize = caps[1].parse().unwrap();
                 let rows: usize = caps[2].parse().unwrap();
-                stream_tx.send(Event::Reset(cols, rows, None, None)).await?;
+                Some((cols, rows))
             } else if let Some(caps) = resize_seq_re.captures(&str) {
                 let cols: usize = caps[2].parse().unwrap();
                 let rows: usize = caps[1].parse().unwrap();
-                stream_tx.send(Event::Reset(cols, rows, None, None)).await?;
-            }
+                Some((cols, rows))
+            } else {
+                None
+            };
+
+            stream_tx.send(Reset(size)).await?;
 
             first_read = false;
         }
 
         stream_tx
-            .send(Event::Stdout(now.elapsed().as_secs_f32(), str.into_owned()))
+            .send(Stdout(now.elapsed().as_secs_f32(), str.into_owned()))
             .await?;
     }
 
@@ -199,7 +214,7 @@ type Reader = Pin<Box<dyn AsyncRead + Send + 'static>>;
 async fn read_file(
     filename: Option<String>,
     format: InputFormat,
-    stream_tx: mpsc::Sender<Event>,
+    stream_tx: mpsc::Sender<InputEvent>,
 ) -> Result<()> {
     let mut file: Reader = match &filename {
         Some(filename) => Box::pin(Box::new(File::open(filename).await?)),
@@ -212,7 +227,7 @@ async fn read_file(
             InputFormat::Raw => read_raw_file(file, &stream_tx).await?,
         }
 
-        stream_tx.send(Event::Offline).await?;
+        stream_tx.send(InputEvent::Closed).await?;
 
         if let Some(filename) = &filename {
             file = Box::pin(Box::new(File::open(filename).await?));
@@ -283,7 +298,7 @@ struct ClientInitResponse {
     cols: usize,
     rows: usize,
     init: String,
-    broadcast_rx: broadcast::Receiver<Event>,
+    broadcast_rx: broadcast::Receiver<StreamEvent>,
 }
 
 impl ClientInitResponse {
@@ -291,7 +306,7 @@ impl ClientInitResponse {
         online: bool,
         stream_time: f32,
         vt: &Vt,
-        broadcast_rx: broadcast::Receiver<Event>,
+        broadcast_rx: broadcast::Receiver<StreamEvent>,
     ) -> Self {
         Self {
             online,
@@ -307,12 +322,12 @@ impl ClientInitResponse {
 type ClientInitRequest = oneshot::Sender<ClientInitResponse>;
 
 async fn handle_events(
-    cols: usize,
-    rows: usize,
-    mut stream_rx: mpsc::Receiver<Event>,
+    default_cols: usize,
+    default_rows: usize,
+    mut input_rx: mpsc::Receiver<InputEvent>,
     mut clients_rx: mpsc::Receiver<ClientInitRequest>,
 ) -> Option<()> {
-    let mut vt = Vt::new(cols, rows);
+    let mut vt = Vt::new(default_cols, default_rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
     let mut last_stream_time = 0.0;
     let mut last_feed_time = Instant::now();
@@ -320,30 +335,32 @@ async fn handle_events(
 
     loop {
         tokio::select! {
-            value = stream_rx.recv() => {
+            value = input_rx.recv() => {
                 let event = value?;
                 debug!("stream event: {:?}", event);
 
                 match &event {
-                    Event::Reset(cols, rows, _, _) => {
-                        vt = Vt::new(*cols, *rows);
+                    InputEvent::Reset(size) => {
+                        let (cols, rows) = size.unwrap_or((default_cols, default_rows));
+                        vt = Vt::new(cols, rows);
                         last_stream_time = 0.0;
                         last_feed_time = Instant::now();
                         online = true;
+                        let _ = broadcast_tx.send(StreamEvent::Reset((cols, rows), 0.0, None));
                     }
 
-                    Event::Stdout(time, data) => {
+                    InputEvent::Stdout(time, data) => {
                         vt.feed_str(data);
                         last_stream_time = *time;
                         last_feed_time = Instant::now();
+                        let _ = broadcast_tx.send(StreamEvent::Stdout(*time, data.clone()));
                     }
 
-                    Event::Offline => {
+                    InputEvent::Closed => {
                         online = false;
+                        let _ = broadcast_tx.send(StreamEvent::Offline);
                     }
                 }
-
-                let _ = broadcast_tx.send(event);
             }
 
             request = clients_rx.recv() => {
@@ -358,20 +375,15 @@ async fn handle_events(
 
 async fn event_stream(
     clients_tx: &mpsc::Sender<ClientInitRequest>,
-) -> Result<impl Stream<Item = Event>> {
-    use Event::*;
+) -> Result<impl Stream<Item = StreamEvent>> {
+    use StreamEvent::*;
 
     let (tx, rx) = oneshot::channel();
     clients_tx.send(tx).await?;
     let resp = rx.await?;
 
     let init_event = if resp.online {
-        Reset(
-            resp.cols,
-            resp.rows,
-            Some(resp.init),
-            Some(resp.stream_time),
-        )
+        Reset((resp.cols, resp.rows), resp.stream_time, Some(resp.init))
     } else {
         Offline
     };
@@ -464,7 +476,7 @@ async fn main() -> Result<()> {
 
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
 
-    let (stream_tx, stream_rx) = mpsc::channel(1024);
+    let (input_tx, input_rx) = mpsc::channel(1024);
     let (clients_tx, clients_rx) = mpsc::channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -498,7 +510,7 @@ async fn main() -> Result<()> {
 
     let source_name = cli.filename.clone().unwrap_or_else(|| "stdin".to_string());
     info!("reading from {}", source_name);
-    let reader = read_file(cli.filename, cli.in_fmt, stream_tx);
+    let reader = read_file(cli.filename, cli.in_fmt, input_tx);
     let mut reader_handle = tokio::spawn(reader);
 
     if let Some(url) = cli.forward_url {
@@ -506,7 +518,7 @@ async fn main() -> Result<()> {
         tokio::spawn(forwarder(clients_tx, url));
     }
 
-    tokio::spawn(handle_events(cli.cols, cli.rows, stream_rx, clients_rx));
+    tokio::spawn(handle_events(cli.cols, cli.rows, input_rx, clients_rx));
 
     tokio::select! {
         result = &mut reader_handle => {
