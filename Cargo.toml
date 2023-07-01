@@ -20,6 +20,6 @@ warp-embed = "0.4.0"
 rust-embed = "6.4.0"
 async-stream = "0.3.3"
 tokio-stream = { version = "0.1.9", features = ["sync"] }
-tokio-tungstenite = "0.18.0"
+tokio-tungstenite = { version = "0.18.0", features = ["rustls-tls-webpki-roots"] }
 regex = "1"
 url = "2.4.0"
