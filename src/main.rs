@@ -139,17 +139,18 @@ where
 
     let buf_reader = tokio::io::BufReader::new(file);
     let mut lines = buf_reader.lines();
+    let mut first_read = true;
 
     while let Ok(Some(line)) = lines.next_line().await {
-        match line.chars().next() {
-            Some('{') => {
+        match (line.chars().next(), first_read) {
+            (Some('{'), _) => {
                 let header = serde_json::from_str::<Header>(&line)?;
                 stream_tx
                     .send(Reset(Some((header.width, header.height))))
                     .await?;
             }
 
-            Some('[') => {
+            (Some('['), false) => {
                 let (time, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
 
                 if event_type == "o" {
@@ -159,6 +160,8 @@ where
 
             _ => bail!("invalid input line"),
         }
+
+        first_read = false;
     }
 
     Ok(())
