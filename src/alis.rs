@@ -5,19 +5,10 @@ use futures_util::{stream, Stream, StreamExt};
 use std::future;
 use tokio::sync::mpsc;
 
+#[derive(Default)]
 pub(crate) struct Encoder {}
 
-impl Default for Encoder {
-    fn default() -> Self {
-        Encoder::new()
-    }
-}
-
 impl Encoder {
-    pub fn new() -> Self {
-        Encoder {}
-    }
-
     pub fn header(&self) -> Vec<u8> {
         "ALiS\x01\x00\x00\x00\x00\x00".as_bytes().into()
     }
