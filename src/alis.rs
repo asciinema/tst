@@ -1,4 +1,8 @@
-use crate::StreamEvent;
+use crate::{event_stream, ClientInitRequest, StreamEvent};
+use anyhow::Result;
+use futures_util::{stream, Stream, StreamExt};
+use std::future;
+use tokio::sync::mpsc;
 
 pub(crate) struct Encoder {}
 
@@ -53,4 +57,18 @@ impl Encoder {
             StreamEvent::Offline => vec![0x04],
         }
     }
+}
+
+pub async fn stream(
+    clients_tx: &mpsc::Sender<ClientInitRequest>,
+) -> Result<impl Stream<Item = Vec<u8>>> {
+    let mut encoder = Encoder::default();
+
+    let s1 = stream::once(future::ready(encoder.header()));
+
+    let s2 = event_stream(clients_tx)
+        .await?
+        .map(move |e| encoder.encode(e));
+
+    Ok(s1.chain(s2))
 }

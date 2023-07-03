@@ -193,20 +193,6 @@ async fn event_stream(
     Ok(s1.chain(s2))
 }
 
-async fn alis_stream(
-    clients_tx: &mpsc::Sender<ClientInitRequest>,
-) -> Result<impl Stream<Item = Vec<u8>>> {
-    let mut alis_encoder = alis::Encoder::default();
-
-    let s1 = stream::once(future::ready(alis_encoder.header()));
-
-    let s2 = event_stream(clients_tx)
-        .await?
-        .map(move |e| alis_encoder.encode(e));
-
-    Ok(s1.chain(s2))
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();

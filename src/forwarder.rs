@@ -1,4 +1,5 @@
-use crate::{alis_stream, ClientInitRequest};
+use crate::alis;
+use crate::ClientInitRequest;
 use anyhow::Result;
 use futures_util::{sink, stream, StreamExt};
 use log::{debug, info};
@@ -38,7 +39,7 @@ async fn forward_once(clients_tx: &mpsc::Sender<ClientInitRequest>, url: &url::U
         let _ = read.map(Ok).forward(sink::drain()).await;
     });
 
-    let alis_stream = alis_stream(clients_tx)
+    let alis_stream = alis::stream(clients_tx)
         .await?
         .map(tungstenite::Message::binary);
 

@@ -1,4 +1,5 @@
-use crate::{alis_stream, event_stream, ClientInitRequest};
+use crate::alis;
+use crate::{event_stream, ClientInitRequest};
 use anyhow::Result;
 use futures_util::{stream, FutureExt, Stream, StreamExt};
 use log::{debug, info};
@@ -72,7 +73,7 @@ async fn handle_websocket(
     websocket: ws::WebSocket,
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<()> {
-    let s1 = alis_stream(&clients_tx).await?.map(ws::Message::binary);
+    let s1 = alis::stream(&clients_tx).await?.map(ws::Message::binary);
     let s2 = stream::once(future::ready(ws::Message::close_with(1000u16, "done")));
     s1.chain(s2).map(Ok).forward(websocket).await?;
 
