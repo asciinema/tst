@@ -94,6 +94,11 @@ where
     Ok(())
 }
 
+lazy_static::lazy_static! {
+    static ref SCRIPT_HEADER_RE: Regex = Regex::new(r#"\[.*COLUMNS="(\d{1,3})" LINES="(\d{1,3})".*\]"#).unwrap();
+    static ref RESIZE_SEQ_RE: Regex = Regex::new(r#"\x1b\[8;(\d{1,3});(\d{1,3})t"#).unwrap();
+}
+
 async fn read_raw_file<F>(mut file: F, stream_tx: &mpsc::Sender<Event>) -> Result<()>
 where
     F: AsyncReadExt + std::marker::Unpin,
@@ -102,8 +107,6 @@ where
 
     let mut buffer = [0; 1024];
     let mut first_read = true;
-    let script_header_re = Regex::new(r#"\[.*COLUMNS="(\d{1,3})" LINES="(\d{1,3})".*\]"#).unwrap();
-    let resize_seq_re = Regex::new(r#"\x1b\[8;(\d{1,3});(\d{1,3})t"#).unwrap();
     let now = time::Instant::now();
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
@@ -114,11 +117,11 @@ where
         let str = String::from_utf8_lossy(&buffer[..n]);
 
         if first_read {
-            let size = if let Some(caps) = script_header_re.captures(&str) {
+            let size = if let Some(caps) = SCRIPT_HEADER_RE.captures(&str) {
                 let cols: usize = caps[1].parse().unwrap();
                 let rows: usize = caps[2].parse().unwrap();
                 Some((cols, rows))
-            } else if let Some(caps) = resize_seq_re.captures(&str) {
+            } else if let Some(caps) = RESIZE_SEQ_RE.captures(&str) {
                 let cols: usize = caps[2].parse().unwrap();
                 let rows: usize = caps[1].parse().unwrap();
                 Some((cols, rows))
