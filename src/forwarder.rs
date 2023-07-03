@@ -7,6 +7,9 @@ use std::time;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::IntervalStream;
 
+const WS_PING_INTERVAL: u64 = 15;
+const MAX_RECONNECT_DELAY: u64 = 5000;
+
 pub async fn forward(clients_tx: mpsc::Sender<ClientInitRequest>, url: url::Url) -> Result<()> {
     let mut reconnect_attempt = 0;
 
@@ -25,8 +28,6 @@ pub async fn forward(clients_tx: mpsc::Sender<ClientInitRequest>, url: url::Url)
         tokio::time::sleep(time::Duration::from_millis(delay)).await;
     }
 }
-
-const WS_PING_INTERVAL: u64 = 15;
 
 async fn forward_once(clients_tx: &mpsc::Sender<ClientInitRequest>, url: &url::Url) -> Result<()> {
     use tokio_tungstenite::tungstenite;
@@ -58,5 +59,5 @@ async fn forward_once(clients_tx: &mpsc::Sender<ClientInitRequest>, url: &url::U
 }
 
 fn exponential_delay(attempt: usize) -> u64 {
-    (2_u64.pow(attempt as u32) * 500).min(5000)
+    (2_u64.pow(attempt as u32) * 500).min(MAX_RECONNECT_DELAY)
 }
