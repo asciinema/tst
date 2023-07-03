@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use clap::ArgEnum;
+use log::info;
 use regex::Regex;
 use serde::Deserialize;
 use std::pin::Pin;
@@ -36,8 +37,15 @@ pub async fn read(
     stream_tx: mpsc::Sender<Event>,
 ) -> Result<()> {
     let mut file: Reader = match &filename {
-        Some(filename) => Box::pin(Box::new(File::open(filename).await?)),
-        None => Box::pin(Box::new(tokio::io::stdin())),
+        Some(filename) => {
+            info!("reading from {filename}");
+            Box::pin(Box::new(File::open(filename).await?))
+        }
+
+        None => {
+            info!("reading from stdin");
+            Box::pin(Box::new(tokio::io::stdin()))
+        }
     };
 
     loop {

@@ -13,6 +13,8 @@ const MAX_RECONNECT_DELAY: u64 = 5000;
 pub async fn forward(clients_tx: mpsc::Sender<ClientInitRequest>, url: url::Url) -> Result<()> {
     let mut reconnect_attempt = 0;
 
+    info!("forwarding to {url}");
+
     loop {
         let time = time::Instant::now();
         let result = forward_once(&clients_tx, &url).await;
@@ -24,7 +26,7 @@ pub async fn forward(clients_tx: mpsc::Sender<ClientInitRequest>, url: url::Url)
 
         let delay = exponential_delay(reconnect_attempt);
         reconnect_attempt = (reconnect_attempt + 1).min(10);
-        info!("forwarder: connection closed, reconnecting in {delay}");
+        info!("connection closed, reconnecting in {delay}");
         tokio::time::sleep(time::Duration::from_millis(delay)).await;
     }
 }
@@ -33,7 +35,7 @@ async fn forward_once(clients_tx: &mpsc::Sender<ClientInitRequest>, url: &url::U
     use tokio_tungstenite::tungstenite;
 
     let (ws, _) = tokio_tungstenite::connect_async(url).await?;
-    info!("forwarder: connected to endpoint");
+    info!("connected to endpoint");
     let (write, read) = ws.split();
 
     tokio::spawn(async {

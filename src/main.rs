@@ -2,8 +2,7 @@ use anyhow::Result;
 use avt::Vt;
 use clap::Parser;
 use env_logger::Env;
-use log::{debug, info};
-use std::net::SocketAddr;
+use log::debug;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 mod alis;
@@ -156,15 +155,12 @@ async fn main() -> Result<()> {
     let (clients_tx, clients_rx) = mpsc::channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let listen_addr: SocketAddr = cli.listen_addr.parse()?;
-    let mut server_handle = server::serve(listen_addr, clients_tx.clone(), shutdown_rx)?;
+    let listen_addr = cli.listen_addr.parse()?;
 
-    let source_name = cli.filename.clone().unwrap_or_else(|| "stdin".to_string());
-    info!("reading from {}", source_name);
+    let mut server_handle = server::serve(listen_addr, clients_tx.clone(), shutdown_rx)?;
     let mut reader_handle = tokio::spawn(input::read(cli.filename, cli.in_fmt, input_tx));
 
     if let Some(url) = cli.forward_url {
-        info!("forwarding to {}", &url);
         tokio::spawn(forwarder::forward(clients_tx, url));
     }
 
