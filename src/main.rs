@@ -22,7 +22,7 @@ use warp::hyper::Body;
 use warp::sse;
 use warp::ws;
 use warp::{Filter, Reply};
-mod alis_encoder;
+mod alis;
 
 const WS_PING_INTERVAL: u64 = 15;
 
@@ -403,7 +403,7 @@ async fn event_stream(
 async fn alis_stream(
     clients_tx: &mpsc::Sender<ClientInitRequest>,
 ) -> Result<impl Stream<Item = Vec<u8>>> {
-    let mut alis_encoder = alis_encoder::AlisEncoder::default();
+    let mut alis_encoder = alis::Encoder::default();
 
     let s1 = stream::once(future::ready(alis_encoder.header()));
 

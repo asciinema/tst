@@ -1,16 +1,16 @@
 use crate::StreamEvent;
 
-pub(crate) struct AlisEncoder {}
+pub(crate) struct Encoder {}
 
-impl Default for AlisEncoder {
+impl Default for Encoder {
     fn default() -> Self {
-        AlisEncoder::new()
+        Encoder::new()
     }
 }
 
-impl AlisEncoder {
+impl Encoder {
     pub fn new() -> Self {
-        AlisEncoder {}
+        Encoder {}
     }
 
     pub fn header(&self) -> Vec<u8> {
