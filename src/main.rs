@@ -2,12 +2,10 @@ use anyhow::{bail, Result};
 use avt::Vt;
 use clap::{ArgEnum, Parser};
 use env_logger::Env;
-use futures_util::{sink, stream, FutureExt, Stream, StreamExt};
+use futures_util::{sink, stream, Stream, StreamExt};
 use log::{debug, info};
 use regex::Regex;
-use rust_embed::RustEmbed;
 use serde::Deserialize;
-use std::convert::Infallible;
 use std::future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -17,12 +15,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
-use warp::http::{self, Response};
-use warp::hyper::Body;
-use warp::sse;
-use warp::ws;
-use warp::{Filter, Reply};
 mod alis;
+mod server;
 
 const WS_PING_INTERVAL: u64 = 15;
 
@@ -85,10 +79,6 @@ struct Cli {
     verbose: bool,
 }
 
-#[derive(RustEmbed)]
-#[folder = "public"]
-struct Assets;
-
 #[derive(Debug, Clone)]
 enum InputEvent {
     Reset(Option<(usize, usize)>),
@@ -119,15 +109,6 @@ impl From<StreamEvent> for serde_json::Value {
 
             Offline => serde_json::json!({ "status": "offline" }),
         }
-    }
-}
-
-impl From<StreamEvent> for sse::Event {
-    fn from(event: StreamEvent) -> Self {
-        let sse_event = sse::Event::default();
-        let json_value: serde_json::Value = event.into();
-
-        sse_event.data(json_value.to_string())
     }
 }
 
@@ -295,7 +276,7 @@ async fn forwarder(clients_tx: mpsc::Sender<ClientInitRequest>, url: url::Url) -
 }
 
 #[derive(Debug)]
-struct ClientInitResponse {
+pub struct ClientInitResponse {
     online: bool,
     stream_time: f32,
     cols: usize,
@@ -414,60 +395,6 @@ async fn alis_stream(
     Ok(s1.chain(s2))
 }
 
-async fn handle_websocket(
-    websocket: ws::WebSocket,
-    clients_tx: mpsc::Sender<ClientInitRequest>,
-) -> Result<()> {
-    let s1 = alis_stream(&clients_tx).await?.map(ws::Message::binary);
-    let s2 = stream::once(future::ready(ws::Message::close_with(1000u16, "done")));
-    s1.chain(s2).map(Ok).forward(websocket).await?;
-
-    Ok(())
-}
-
-fn ws_handler(
-    addr: SocketAddr,
-    ws: ws::Ws,
-    clients_tx: mpsc::Sender<ClientInitRequest>,
-) -> impl Reply {
-    ws.on_upgrade(move |websocket| async move {
-        info!("ws client connected: {:?}", addr);
-
-        let result = handle_websocket(websocket, clients_tx).await;
-        info!("ws client disconnected: {:?}", addr);
-
-        if let Err(e) = result {
-            debug!("ws client err: {:?}", e);
-        }
-    })
-}
-
-async fn sse_stream(
-    clients_tx: mpsc::Sender<ClientInitRequest>,
-) -> Result<impl Stream<Item = Result<sse::Event, Infallible>>> {
-    let s1 = event_stream(&clients_tx).await?.map(|e| e.into());
-    let s2 = stream::iter(vec![sse::Event::default().event("done").data("done")]);
-    let stream = s1.chain(s2).map(Ok);
-
-    Ok(stream)
-}
-
-async fn sse_handler(
-    addr: SocketAddr,
-    clients_tx: mpsc::Sender<ClientInitRequest>,
-) -> Response<Body> {
-    info!("sse client connected: {:?}", addr);
-
-    match sse_stream(clients_tx).await {
-        Ok(stream) => sse::reply(sse::keep_alive().stream(stream)).into_response(),
-
-        Err(e) => {
-            debug!("sse client err: {:?}", e);
-            http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -483,33 +410,8 @@ async fn main() -> Result<()> {
     let (clients_tx, clients_rx) = mpsc::channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let ws_clients_tx = clients_tx.clone();
-    let ws_clients_tx = warp::any().map(move || ws_clients_tx.clone());
-    let ws_route = warp::path("ws")
-        .and(warp::addr::remote())
-        .map(Option::unwrap)
-        .and(warp::ws())
-        .and(ws_clients_tx)
-        .map(ws_handler);
-
-    let sse_clients_tx = clients_tx.clone();
-    let sse_clients_tx = warp::any().map(move || sse_clients_tx.clone());
-    let sse_route = warp::path("sse")
-        .and(warp::addr::remote())
-        .map(Option::unwrap)
-        .and(warp::get())
-        .and(sse_clients_tx)
-        .then(sse_handler);
-
-    let routes = ws_route.or(sse_route).or(warp_embed::embed(&Assets));
-
     let listen_addr: SocketAddr = cli.listen_addr.parse()?;
-    info!("streaming via WebSocket at ws://{}/ws", listen_addr);
-    info!("streaming via SSE at http://{}/sse", listen_addr);
-    info!("serving assets from ./public at http://{}", listen_addr);
-    let signal = shutdown_rx.map(|_| ());
-    let (_, server) = warp::serve(routes).try_bind_with_graceful_shutdown(listen_addr, signal)?;
-    let mut server_handle = tokio::spawn(server);
+    let mut server_handle = server::serve(listen_addr, clients_tx.clone(), shutdown_rx)?;
 
     let source_name = cli.filename.clone().unwrap_or_else(|| "stdin".to_string());
     info!("reading from {}", source_name);
