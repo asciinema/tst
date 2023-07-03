@@ -1,5 +1,6 @@
 use crate::alis;
-use crate::{event_stream, ClientInitRequest, StreamEvent};
+use crate::client;
+use crate::ClientInitRequest;
 use anyhow::Result;
 use futures_util::{stream, FutureExt, Stream, StreamExt};
 use log::{debug, info};
@@ -99,16 +100,16 @@ async fn sse_handler(
 async fn sse_stream(
     clients_tx: mpsc::Sender<ClientInitRequest>,
 ) -> Result<impl Stream<Item = Result<sse::Event, Infallible>>> {
-    let s1 = event_stream(&clients_tx).await?.map(|e| e.into());
+    let s1 = client::stream(&clients_tx).await?.map(|e| e.into());
     let s2 = stream::iter(vec![sse::Event::default().event("done").data("done")]);
     let stream = s1.chain(s2).map(Ok);
 
     Ok(stream)
 }
 
-impl From<StreamEvent> for sse::Event {
-    fn from(event: StreamEvent) -> Self {
-        use StreamEvent::*;
+impl From<client::Event> for sse::Event {
+    fn from(event: client::Event) -> Self {
+        use client::Event::*;
 
         let json = match event {
             Reset((cols, rows), time, init) => serde_json::json!({

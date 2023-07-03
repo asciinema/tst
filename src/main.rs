@@ -2,14 +2,12 @@ use anyhow::Result;
 use avt::Vt;
 use clap::Parser;
 use env_logger::Env;
-use futures_util::{stream, Stream, StreamExt};
 use log::{debug, info};
-use std::future;
 use std::net::SocketAddr;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
-use tokio_stream::wrappers::BroadcastStream;
 mod alis;
+mod client;
 mod forwarder;
 mod input;
 mod server;
@@ -61,13 +59,6 @@ struct Cli {
     verbose: bool,
 }
 
-#[derive(Debug, Clone)]
-enum StreamEvent {
-    Reset((usize, usize), f32, Option<String>),
-    Stdout(f32, String),
-    Offline,
-}
-
 #[derive(Debug)]
 pub struct ClientInitResponse {
     online: bool,
@@ -75,7 +66,7 @@ pub struct ClientInitResponse {
     cols: usize,
     rows: usize,
     init: String,
-    broadcast_rx: broadcast::Receiver<StreamEvent>,
+    broadcast_rx: broadcast::Receiver<client::Event>,
 }
 
 impl ClientInitResponse {
@@ -83,7 +74,7 @@ impl ClientInitResponse {
         online: bool,
         stream_time: f32,
         vt: &Vt,
-        broadcast_rx: broadcast::Receiver<StreamEvent>,
+        broadcast_rx: broadcast::Receiver<client::Event>,
     ) -> Self {
         Self {
             online,
@@ -123,19 +114,19 @@ async fn handle_events(
                         last_stream_time = 0.0;
                         last_feed_time = Instant::now();
                         online = true;
-                        let _ = broadcast_tx.send(StreamEvent::Reset((cols, rows), 0.0, None));
+                        let _ = broadcast_tx.send(client::Event::Reset((cols, rows), 0.0, None));
                     }
 
                     input::Event::Stdout(time, data) => {
                         vt.feed_str(data);
                         last_stream_time = *time;
                         last_feed_time = Instant::now();
-                        let _ = broadcast_tx.send(StreamEvent::Stdout(*time, data.clone()));
+                        let _ = broadcast_tx.send(client::Event::Stdout(*time, data.clone()));
                     }
 
                     input::Event::Closed => {
                         online = false;
-                        let _ = broadcast_tx.send(StreamEvent::Offline);
+                        let _ = broadcast_tx.send(client::Event::Offline);
                     }
                 }
             }
@@ -148,30 +139,6 @@ async fn handle_events(
             }
         }
     }
-}
-
-async fn event_stream(
-    clients_tx: &mpsc::Sender<ClientInitRequest>,
-) -> Result<impl Stream<Item = StreamEvent>> {
-    use StreamEvent::*;
-
-    let (tx, rx) = oneshot::channel();
-    clients_tx.send(tx).await?;
-    let resp = rx.await?;
-
-    let init_event = if resp.online {
-        Reset((resp.cols, resp.rows), resp.stream_time, Some(resp.init))
-    } else {
-        Offline
-    };
-
-    let s1 = stream::once(future::ready(init_event));
-
-    let s2 = BroadcastStream::new(resp.broadcast_rx)
-        .take_while(|r| future::ready(r.is_ok()))
-        .map(Result::unwrap);
-
-    Ok(s1.chain(s2))
 }
 
 #[tokio::main]
