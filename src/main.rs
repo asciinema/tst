@@ -68,25 +68,6 @@ enum StreamEvent {
     Offline,
 }
 
-impl From<StreamEvent> for serde_json::Value {
-    fn from(event: StreamEvent) -> Self {
-        use StreamEvent::*;
-
-        match event {
-            Reset((cols, rows), time, init) => serde_json::json!({
-                "cols": cols,
-                "rows": rows,
-                "time": time,
-                "init": init,
-            }),
-
-            Stdout(time, data) => serde_json::json!((time, "o", data)),
-
-            Offline => serde_json::json!({ "status": "offline" }),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct ClientInitResponse {
     online: bool,

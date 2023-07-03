@@ -1,5 +1,5 @@
 use crate::alis;
-use crate::{event_stream, ClientInitRequest};
+use crate::{event_stream, ClientInitRequest, StreamEvent};
 use anyhow::Result;
 use futures_util::{stream, FutureExt, Stream, StreamExt};
 use log::{debug, info};
@@ -106,11 +106,23 @@ async fn sse_stream(
     Ok(stream)
 }
 
-impl From<crate::StreamEvent> for sse::Event {
-    fn from(event: crate::StreamEvent) -> Self {
-        let sse_event = sse::Event::default();
-        let json_value: serde_json::Value = event.into();
+impl From<StreamEvent> for sse::Event {
+    fn from(event: StreamEvent) -> Self {
+        use StreamEvent::*;
 
-        sse_event.data(json_value.to_string())
+        let json = match event {
+            Reset((cols, rows), time, init) => serde_json::json!({
+                "cols": cols,
+                "rows": rows,
+                "time": time,
+                "init": init,
+            }),
+
+            Stdout(time, data) => serde_json::json!((time, "o", data)),
+
+            Offline => serde_json::json!({ "status": "offline" }),
+        };
+
+        sse::Event::default().data(json.to_string())
     }
 }
