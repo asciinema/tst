@@ -114,37 +114,34 @@ where
     use Event::*;
 
     let mut buffer = [0; 1024];
-    let mut first_read = true;
     let now = time::Instant::now();
+
+    if let Ok(n) = file.read(&mut buffer[..]).await {
+        let str = String::from_utf8_lossy(&buffer[..n]);
+
+        let size = if let Some(caps) = SCRIPT_HEADER_RE.captures(&str) {
+            let cols: usize = caps[1].parse().unwrap();
+            let rows: usize = caps[2].parse().unwrap();
+            Some((cols, rows))
+        } else if let Some(caps) = RESIZE_SEQ_RE.captures(&str) {
+            let cols: usize = caps[2].parse().unwrap();
+            let rows: usize = caps[1].parse().unwrap();
+            Some((cols, rows))
+        } else {
+            None
+        };
+
+        stream_tx.send(Reset(size)).await?;
+    }
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
         if n == 0 {
             break;
         }
 
-        let str = String::from_utf8_lossy(&buffer[..n]);
-
-        if first_read {
-            let size = if let Some(caps) = SCRIPT_HEADER_RE.captures(&str) {
-                let cols: usize = caps[1].parse().unwrap();
-                let rows: usize = caps[2].parse().unwrap();
-                Some((cols, rows))
-            } else if let Some(caps) = RESIZE_SEQ_RE.captures(&str) {
-                let cols: usize = caps[2].parse().unwrap();
-                let rows: usize = caps[1].parse().unwrap();
-                Some((cols, rows))
-            } else {
-                None
-            };
-
-            stream_tx.send(Reset(size)).await?;
-
-            first_read = false;
-        }
-
-        stream_tx
-            .send(Stdout(now.elapsed().as_secs_f32(), str.into_owned()))
-            .await?;
+        let time = now.elapsed().as_secs_f32();
+        let str = String::from_utf8_lossy(&buffer[..n]).into_owned();
+        stream_tx.send(Stdout(time, str)).await?;
     }
 
     Ok(())
