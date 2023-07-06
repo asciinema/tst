@@ -1,6 +1,6 @@
 use anyhow::Result;
 use avt::Vt;
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use env_logger::Env;
 use log::debug;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -29,6 +29,7 @@ fn validate_forward_url(s: &str) -> Result<(), String> {
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
+#[clap(group(ArgGroup::new("output").args(&["forward-url", "listen-addr"]).required(true).multiple(true)))]
 struct Cli {
     /// Input filename [default: stdin]
     #[clap(short, long)]
@@ -42,7 +43,7 @@ struct Cli {
     #[clap(long, arg_enum, default_value_t = input::Format::Asciicast)]
     in_fmt: input::Format,
 
-    /// Listen address
+    /// HTTP listen address [default: 0.0.0.0:8765]
     #[clap(short, long, default_missing_value = "0.0.0.0:8765")]
     listen_addr: Option<String>,
 
