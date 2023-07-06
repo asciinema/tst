@@ -105,7 +105,6 @@ async fn handle_events(
         tokio::select! {
             value = input_rx.recv() => {
                 let event = value?;
-                debug!("stream event: {:?}", event);
 
                 match &event {
                     input::Event::Reset(size) => {
@@ -115,6 +114,7 @@ async fn handle_events(
                         last_feed_time = Instant::now();
                         online = true;
                         let _ = broadcast_tx.send(client::Event::Reset((cols, rows), 0.0, None));
+                        debug!("stream reset ({cols}x{rows})");
                     }
 
                     input::Event::Stdout(time, data) => {
@@ -125,6 +125,7 @@ async fn handle_events(
                     }
 
                     input::Event::Closed => {
+                        debug!("stream closed");
                         online = false;
                         let _ = broadcast_tx.send(client::Event::Offline);
                     }
