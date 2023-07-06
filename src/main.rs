@@ -30,11 +30,12 @@ fn validate_forward_url(s: &str) -> Result<(), String> {
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
-    /// Input pipe filename (defaults to stdin)
-    filename: Option<String>,
+    /// Input filename [default: stdin]
+    #[clap(short, long)]
+    input: Option<String>,
 
     /// WebSocket forwarding address
-    #[clap(validator = validate_forward_url)]
+    #[clap(short, long, validator = validate_forward_url)]
     forward_url: Option<url::Url>,
 
     /// Input format
@@ -158,7 +159,7 @@ async fn main() -> Result<()> {
     let listen_addr = cli.listen_addr.parse()?;
 
     let mut server_handle = server::serve(listen_addr, clients_tx.clone(), shutdown_rx)?;
-    let mut reader_handle = tokio::spawn(input::read(cli.filename, cli.in_fmt, input_tx));
+    let mut reader_handle = tokio::spawn(input::read(cli.input, cli.in_fmt, input_tx));
 
     if let Some(url) = cli.forward_url {
         tokio::spawn(forwarder::forward(clients_tx, url));
