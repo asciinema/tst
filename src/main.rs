@@ -47,13 +47,13 @@ struct Cli {
     #[clap(short, long, default_missing_value = "0.0.0.0:8765")]
     listen_addr: Option<String>,
 
-    /// Virtual terminal width
-    #[clap(long, default_value_t = 80)]
-    cols: usize,
+    /// Set terminal width fallback
+    #[clap(long)]
+    cols: Option<usize>,
 
-    /// Virtual terminal height
-    #[clap(long, default_value_t = 24)]
-    rows: usize,
+    /// Set terminal height fallback
+    #[clap(long)]
+    rows: Option<usize>,
 
     /// Enable verbose logging
     #[clap(short, long)]
@@ -96,6 +96,7 @@ async fn handle_events(
     mut input_rx: mpsc::Receiver<input::Event>,
     mut clients_rx: mpsc::Receiver<ClientInitRequest>,
 ) -> Option<()> {
+    debug!("default term size: {default_cols}x{default_rows}");
     let mut vt = Vt::new(default_cols, default_rows);
     let (broadcast_tx, _) = broadcast::channel(1024);
     let mut last_stream_time = 0.0;
@@ -173,7 +174,10 @@ async fn main() -> Result<()> {
         tokio::spawn(forwarder::forward(clients_tx, url));
     }
 
-    tokio::spawn(handle_events(cli.cols, cli.rows, input_rx, clients_rx));
+    let term_size = termion::terminal_size().unwrap_or((80, 24));
+    let cols = cli.cols.unwrap_or(term_size.0 as usize);
+    let rows = cli.rows.unwrap_or(term_size.1 as usize);
+    tokio::spawn(handle_events(cols, rows, input_rx, clients_rx));
 
     let result = tokio::spawn(input::read(cli.input, cli.in_fmt, input_tx)).await;
     debug!("reader finished: {:?}", &result);
