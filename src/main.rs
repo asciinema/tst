@@ -43,8 +43,8 @@ struct Cli {
     in_fmt: input::Format,
 
     /// Listen address
-    #[clap(short, long, default_value_t = String::from("0.0.0.0:8765"))]
-    listen_addr: String,
+    #[clap(short, long, default_missing_value = "0.0.0.0:8765")]
+    listen_addr: Option<String>,
 
     /// Virtual terminal width
     #[clap(long, default_value_t = 80)]
@@ -156,10 +156,10 @@ async fn main() -> Result<()> {
     let (clients_tx, clients_rx) = mpsc::channel(1);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let listen_addr = cli.listen_addr.parse()?;
-
-    let mut server_handle = server::serve(listen_addr, clients_tx.clone(), shutdown_rx)?;
-    let mut reader_handle = tokio::spawn(input::read(cli.input, cli.in_fmt, input_tx));
+    if let Some(listen_addr) = cli.listen_addr {
+        let addr = listen_addr.parse()?;
+        tokio::spawn(server::serve(addr, clients_tx.clone(), shutdown_rx)?);
+    }
 
     if let Some(url) = cli.forward_url {
         tokio::spawn(forwarder::forward(clients_tx, url));
@@ -167,18 +167,10 @@ async fn main() -> Result<()> {
 
     tokio::spawn(handle_events(cli.cols, cli.rows, input_rx, clients_rx));
 
-    tokio::select! {
-        result = &mut reader_handle => {
-            debug!("reader finished: {:?}", &result);
-            let _ = shutdown_tx.send(());
-            result??;
-        }
-
-        result = &mut server_handle => {
-            debug!("server finished: {:?}", &result);
-            result?;
-        }
-    }
+    let result = tokio::spawn(input::read(cli.input, cli.in_fmt, input_tx)).await;
+    debug!("reader finished: {:?}", &result);
+    let _ = shutdown_tx.send(());
+    result??;
 
     Ok(())
 }

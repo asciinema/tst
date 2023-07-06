@@ -2,7 +2,7 @@ use crate::alis;
 use crate::client;
 use crate::ClientInitRequest;
 use anyhow::Result;
-use futures_util::{stream, FutureExt, Stream, StreamExt};
+use futures_util::{stream, Future, FutureExt, Stream, StreamExt};
 use log::{debug, info};
 use rust_embed::RustEmbed;
 use std::convert::Infallible;
@@ -23,7 +23,7 @@ pub fn serve(
     listen_addr: SocketAddr,
     clients_tx: mpsc::Sender<ClientInitRequest>,
     shutdown_rx: oneshot::Receiver<()>,
-) -> Result<tokio::task::JoinHandle<()>> {
+) -> Result<impl Future<Output = ()>> {
     let ws_clients_tx = clients_tx.clone();
     let ws_clients_tx = warp::any().map(move || ws_clients_tx.clone());
     let ws_route = warp::path("ws")
@@ -48,9 +48,8 @@ pub fn serve(
     info!("serving assets from ./public at http://{}", listen_addr);
     let signal = shutdown_rx.map(|_| ());
     let (_, server) = warp::serve(routes).try_bind_with_graceful_shutdown(listen_addr, signal)?;
-    let handle = tokio::spawn(server);
 
-    Ok(handle)
+    Ok(server)
 }
 
 fn ws_handler(
