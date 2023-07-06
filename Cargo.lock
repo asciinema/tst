@@ -38,6 +38,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "atty",
  "avt",
  "clap",
  "env_logger",

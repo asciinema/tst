@@ -145,9 +145,15 @@ async fn handle_events(
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let log_level = match cli.verbose {
-        false => "info",
-        true => "debug",
+    let log_level = match (
+        &cli.input.is_some(),
+        atty::is(atty::Stream::Stdin),
+        atty::is(atty::Stream::Stderr),
+        cli.verbose,
+    ) {
+        (false, false, true, _) => "off",
+        (_, _, _, false) => "info",
+        (_, _, _, true) => "debug",
     };
 
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
