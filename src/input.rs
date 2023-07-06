@@ -86,10 +86,10 @@ where
             }
 
             (Some('['), false) => {
-                let (time, event_type, data) = serde_json::from_str::<(f32, &str, String)>(&line)?;
+                let (time, event_type, text) = serde_json::from_str::<(f32, &str, String)>(&line)?;
 
                 if event_type == "o" {
-                    stream_tx.send(Stdout(time, data)).await?;
+                    stream_tx.send(Stdout(time, text)).await?;
                 }
             }
 
@@ -117,13 +117,13 @@ where
     let now = time::Instant::now();
 
     if let Ok(n) = file.read(&mut buffer[..]).await {
-        let str = String::from_utf8_lossy(&buffer[..n]);
+        let text = String::from_utf8_lossy(&buffer[..n]).into_owned();
 
-        let size = if let Some(caps) = SCRIPT_HEADER_RE.captures(&str) {
+        let size = if let Some(caps) = SCRIPT_HEADER_RE.captures(&text) {
             let cols: usize = caps[1].parse().unwrap();
             let rows: usize = caps[2].parse().unwrap();
             Some((cols, rows))
-        } else if let Some(caps) = RESIZE_SEQ_RE.captures(&str) {
+        } else if let Some(caps) = RESIZE_SEQ_RE.captures(&text) {
             let cols: usize = caps[2].parse().unwrap();
             let rows: usize = caps[1].parse().unwrap();
             Some((cols, rows))
@@ -132,6 +132,8 @@ where
         };
 
         stream_tx.send(Reset(size)).await?;
+        let time = now.elapsed().as_secs_f32();
+        stream_tx.send(Stdout(time, text)).await?;
     }
 
     while let Ok(n) = file.read(&mut buffer[..]).await {
@@ -140,8 +142,8 @@ where
         }
 
         let time = now.elapsed().as_secs_f32();
-        let str = String::from_utf8_lossy(&buffer[..n]).into_owned();
-        stream_tx.send(Stdout(time, str)).await?;
+        let text = String::from_utf8_lossy(&buffer[..n]).into_owned();
+        stream_tx.send(Stdout(time, text)).await?;
     }
 
     Ok(())
