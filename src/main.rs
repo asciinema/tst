@@ -3,6 +3,7 @@ use avt::Vt;
 use clap::{ArgGroup, Parser};
 use env_logger::Env;
 use log::debug;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 mod alis;
@@ -179,10 +180,31 @@ async fn main() -> Result<()> {
     let rows = cli.rows.unwrap_or(term_size.1 as usize);
     tokio::spawn(handle_events(cols, rows, input_rx, clients_rx));
 
-    let result = tokio::spawn(input::read(cli.input, cli.in_fmt, input_tx)).await;
-    debug!("reader finished: {:?}", &result);
-    let _ = shutdown_tx.send(());
-    result??;
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
 
-    Ok(())
+    let mut reader = tokio::spawn(input::read(cli.input, cli.in_fmt, input_tx));
+
+    let result = tokio::select! {
+        result = &mut reader => {
+            debug!("reader finished: {:?}", &result);
+            result?
+        }
+
+        _ = sigterm.recv() => {
+            debug!("got SIGTERM, shutting down");
+            // reader.abort(); // doesn't work
+            Ok(())
+        }
+
+        _ = sigint.recv() => {
+            debug!("got SIGINT, shutting down");
+            // reader.abort(); // doesn't work
+            Ok(())
+        }
+    };
+
+    let _ = shutdown_tx.send(());
+
+    result
 }

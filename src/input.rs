@@ -49,10 +49,11 @@ pub async fn read(
     };
 
     loop {
-        match format {
-            Format::Asciicast => read_asciicast_file(file, &stream_tx).await?,
-            Format::Raw => read_raw_file(file, &stream_tx).await?,
-        }
+        read_lines(file, &stream_tx).await?;
+        // match format {
+        //     Format::Asciicast => read_asciicast_file(file, &stream_tx).await?,
+        //     Format::Raw => read_raw_file(file, &stream_tx).await?,
+        // }
 
         stream_tx.send(Event::Closed).await?;
 
@@ -61,6 +62,27 @@ pub async fn read(
         } else {
             break;
         }
+    }
+
+    Ok(())
+}
+
+async fn read_lines<F>(file: F, stream_tx: &mpsc::Sender<Event>) -> Result<()>
+where
+    F: AsyncReadExt + std::marker::Unpin,
+{
+    use Event::*;
+
+    let buf_reader = tokio::io::BufReader::new(file);
+    let mut lines = buf_reader.lines();
+    let now = time::Instant::now();
+
+    stream_tx.send(Reset(None)).await?;
+
+    while let Ok(Some(mut line)) = lines.next_line().await {
+        let time = now.elapsed().as_secs_f32();
+        line.push_str("\r\n");
+        stream_tx.send(Stdout(time, line)).await?;
     }
 
     Ok(())
