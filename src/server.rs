@@ -120,6 +120,8 @@ impl From<client::Event> for sse::Event {
 
             Stdout(time, data) => serde_json::json!((time, "o", data)),
 
+            Resize(time, cols, rows) => serde_json::json!((time, "r", &format!("#{cols}x#{rows}"))),
+
             Offline => serde_json::json!({ "status": "offline" }),
         };
 

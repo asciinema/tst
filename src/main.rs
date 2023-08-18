@@ -90,6 +90,10 @@ impl ClientInitResponse {
 
 type ClientInitRequest = oneshot::Sender<ClientInitResponse>;
 
+fn resize_seq(cols: &usize, rows: &usize) -> String {
+    format!("\x1b[8;{rows};{cols}t")
+}
+
 async fn handle_events(
     default_cols: usize,
     default_rows: usize,
@@ -124,6 +128,13 @@ async fn handle_events(
                         last_stream_time = *time;
                         last_feed_time = Instant::now();
                         let _ = broadcast_tx.send(client::Event::Stdout(*time, data.clone()));
+                    }
+
+                    input::Event::Resize(time, cols, rows) => {
+                        vt.feed_str(&resize_seq(cols, rows));
+                        last_stream_time = *time;
+                        last_feed_time = Instant::now();
+                        let _ = broadcast_tx.send(client::Event::Resize(*time, *cols, *rows));
                     }
 
                     input::Event::Closed => {

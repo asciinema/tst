@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::ArgEnum;
 use log::info;
 use regex::Regex;
@@ -26,6 +26,7 @@ pub struct Header {
 pub enum Event {
     Reset(Option<(usize, usize)>),
     Stdout(f32, String),
+    Resize(f32, usize, usize),
     Closed,
 }
 
@@ -90,6 +91,11 @@ where
 
                 if event_type == "o" {
                     stream_tx.send(Stdout(time, text)).await?;
+                } else if event_type == "r" {
+                    let (cols, rows) = text.split_once('x').ok_or(anyhow!("invalid size"))?;
+                    let cols: usize = cols.parse()?;
+                    let rows: usize = rows.parse()?;
+                    stream_tx.send(Resize(time, cols, rows)).await?;
                 }
             }
 

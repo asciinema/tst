@@ -48,6 +48,19 @@ impl Encoder {
                 msg
             }
 
+            Resize(time, cols, rows) => {
+                let time_bytes = time.to_le_bytes();
+                let cols_bytes = (cols as u16).to_le_bytes();
+                let rows_bytes = (rows as u16).to_le_bytes();
+
+                let mut msg = vec![b'r']; // 1 byte
+                msg.extend_from_slice(&time_bytes); // 4 bytes
+                msg.extend_from_slice(&cols_bytes); // 2 bytes
+                msg.extend_from_slice(&rows_bytes); // 2 bytes
+
+                msg
+            }
+
             Offline => vec![0x04],
         }
     }

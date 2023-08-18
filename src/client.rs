@@ -9,6 +9,7 @@ use tokio_stream::wrappers::BroadcastStream;
 pub enum Event {
     Reset((usize, usize), f32, Option<String>),
     Stdout(f32, String),
+    Resize(f32, usize, usize),
     Offline,
 }
 
