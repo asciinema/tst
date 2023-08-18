@@ -1,5 +1,6 @@
 [package]
-name = "asciinema-streamer"
+name = "tst"
+description = "Terminal streamer"
 version = "0.1.0"
 edition = "2021"
 
