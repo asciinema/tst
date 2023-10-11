@@ -64,8 +64,7 @@ struct Cli {
 pub struct ClientInitResponse {
     online: bool,
     stream_time: f32,
-    cols: usize,
-    rows: usize,
+    vt_size: (usize, usize),
     init: String,
     broadcast_rx: broadcast::Receiver<client::Event>,
 }
@@ -80,8 +79,7 @@ impl ClientInitResponse {
         Self {
             online,
             stream_time,
-            cols: vt.cols,
-            rows: vt.rows,
+            vt_size: vt.size(),
             init: vt.dump(),
             broadcast_rx,
         }

@@ -23,7 +23,7 @@ pub async fn stream(
     let resp = rx.await?;
 
     let init_event = if resp.online {
-        Reset((resp.cols, resp.rows), resp.stream_time, Some(resp.init))
+        Reset(resp.vt_size, resp.stream_time, Some(resp.init))
     } else {
         Offline
     };
