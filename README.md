@@ -20,7 +20,7 @@ asciinema rec live.pipe
 mkfifo live.pipe
 
 # in shell 1
-tst --forward-url https://asciinema.org/s/<stream-producer-token> live.pipe 
+tst --forward-url https://asciinema.org/S/<stream-producer-token> live.pipe 
 
 # in shell 2
 asciinema rec live.pipe
