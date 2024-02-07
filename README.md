@@ -8,7 +8,7 @@ This is (experimental) terminal live streaming utility for asciinema.
 mkfifo live.pipe
 
 # in shell 1
-tst --listen-addr 0.0.0.0:8765 live.pipe 
+tst --listen-addr 0.0.0.0:8765 -i live.pipe 
 
 # in shell 2
 asciinema rec live.pipe
@@ -20,7 +20,7 @@ asciinema rec live.pipe
 mkfifo live.pipe
 
 # in shell 1
-tst --forward-url wss://asciinema.org/S/<stream-producer-token> live.pipe 
+tst --forward-url wss://asciinema.org/ws/S/<stream-producer-token> -i live.pipe 
 
 # in shell 2
 asciinema rec live.pipe
