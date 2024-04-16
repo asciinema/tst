@@ -2,6 +2,9 @@
 
 This is (experimental) terminal live streaming utility for asciinema.
 
+NOTE: this was a proof of concept, and was integrated into main [asciinema
+CLI](https://github.com/asciinema/asciinema) as `asciinema stream -r` command.
+
 ## Stream via embedded HTTP server
 
 ```bash
